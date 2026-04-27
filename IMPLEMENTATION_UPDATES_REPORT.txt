@@ -1,0 +1,175 @@
+Awaz-e-Shehr — Implementation Updates Report
+Date: 24-12-2025
+
+Summary:
+Yeh report un tamam nayi updates ka khulasah deti hai jo ab tak backend mein implement ki gayi hain taake project ko Pakistan ki official administrative hierarchy aur role-based routing ke liye tayyar kia ja sake.
+
+Key changes (high level):
+- Administrative hierarchy models added: Country, Province, Division, District, Tehsil, UnionCouncil.
+- Complaint schema extended to store full hierarchy (countryId, provinceId, divisionId, districtId, tehsilId, unionCouncilId) with validation ensuring consistency between levels.
+- FieldOfficer and DepartmentAdmin models updated to include jurisdiction arrays for province/division/district/tehsil/union council.
+- Department model extended with geographic scope arrays to restrict department operations by area.
+- Assignment service implemented (server/services/assignmentService.js) to auto-route complaints: Category → Department → Province/District/Tehsil → FieldOfficer.
+- Complaint submit flow updated (server/routes/complaints.js) to require hierarchical fields, save them, and call assignmentService to attempt auto-assignment.
+- Authorize middleware enhanced to support geographic scope checks and super-admin bypass (server/middleware/authorize.js).
+- Indexes added to Complaint and officer/admin models for performant queries on country/province/district/tehsil.
+- Seed script created to insert Pakistan and default provinces (server/scripts/seed_pakistan_admins.js).
+- Migration script created to backfill legacy complaints lacking hierarchy (server/scripts/migrate_legacy_complaints.js).
+
+Files created/modified (selected):
+- Added models:
+  - server/models/Country.js
+  - server/models/Province.js
+  - server/models/Division.js
+  - server/models/District.js
+  - server/models/Tehsil.js
+  - server/models/UnionCouncil.js
+- Modified models:
+  - server/models/Complaint.js (added hierarchy fields, validation, indexes)
+  - server/models/FieldOfficer.js (added jurisdiction arrays and indexes)
+  - server/models/Department.js (added geographic scope arrays)
+  - server/models/DepartmentAdmin.js (added allowed* jurisdiction arrays)
+- New service:
+  - server/services/assignmentService.js (department selection, officer selection, routeComplaint)
+- Routes updated:
+  - server/routes/complaints.js (enforce hierarchy on submit, call assignmentService, update timeline/notifications)
+- Middleware:
+  - server/middleware/authorize.js (enhanced for geographic checks)
+- Scripts:
+  - server/scripts/seed_pakistan_admins.js (seed Pakistan + provinces)
+  - server/scripts/migrate_legacy_complaints.js (dry-run and apply migration mapping city->district)
+
+Validation & Behavior Changes:
+- Complaint save now validates that division belongs to province, district belongs to division/province, tehsil belongs to district, and union council belongs to tehsil.
+- Citizen API for complaint submission must include at minimum: countryId, provinceId, districtId. Optional: divisionId, tehsilId, unionCouncilId.
+- Field officers and dept-admin actions are scoped by their jurisdiction arrays; unauthorized geographic access returns 403.
+
+Indexing / Performance:
+- Added compound indexes on Complaint for fast analytics and filtering: { countryId, provinceId, districtId } and { provinceId, tehsilId, unionCouncilId }.
+- Added indexes on FieldOfficer and DepartmentAdmin jurisdiction fields to accelerate officer selection and RBAC checks.
+
+Migration plan (already scaffolded):
+1) Run seed: node server/scripts/seed_pakistan_admins.js to create country and provinces.
+2) Prepare mapping file: server/data/city_to_district_map.json to map existing city names to district codes/ids.
+3) Dry-run migration: node server/scripts/migrate_legacy_complaints.js --dry
+4) After verification, run without --dry to apply updates (ensure backup of complaints collection first).
+
+How to test quickly:
+- Set MONGODB_URI and JWT_SECRET in .env.
+- Run seed script to create Pakistan/provinces.
+- Call POST /api/complaints/submit with a citizen token and include countryId/provinceId/districtId and location payload to create a complaint.
+- Observe logs for assignmentService routing and check Notification collection for assignment notices.
+
+Next recommended tasks (priority order):
+1) Update socket logic and rooms to incorporate province/district/tehsil scoping (e.g., dept:<deptId>:province:<provinceId>:district:<districtId>). 
+2) Implement least-loaded officer selection (count assigned open complaints) in assignmentService.
+3) Update frontend/mobile forms to load and submit hierarchy dropdowns (Country→Province→Division→District→Tehsil→Union Council).
+4) Add UI for managing geographic scope when creating FieldOfficer and DepartmentAdmin.
+5) Add comprehensive tests and lint fixes (some created scripts/models may show unused-var lint warnings). 
+
+Notes & caveats:
+- Current assignmentService uses simple heuristics and returns first matched officer; replace with production-grade load balancing before go-live.
+- Migration script currently uses a mapping file; mapping quality determines accuracy of backfilled district/province values.
+- Ensure environment variables and backups are in place before running migrations on production data.
+
+Date: 4-1-2026
+
+Summary:
+Updates focused on restricting the application scope to Islamabad with a specialized Urban/Rural hierarchy. 
+Replaced generic categories with a Department-Service model for precise routing. Implemented dynamic UI for hierarchy management in Super Admin Dashboard and complaint submission in Citizen Dashboard.
+
+Key Changes (High Level):
+- **Hierarchy Restructuring:**
+  - Locked jurisdiction to Islamabad.
+  - Implemented Urban Sectors (for Urban areas) and Rural Jurisdictions (for Rural areas).
+  - Removed Province/District/Tehsil/UC models from active flow in favor of this flattened structure.
+- **Department-Service Architecture:**
+  - Departments now defined by "Services Offered" rather than generic categories.
+  - Departments mapped to specific Area Types (Urban/Rural) and specific Sectors/Jurisdictions.
+  - Complaint routing now uses Department + Service + Location (Sector/Jurisdiction).
+- **Citizen Dashboard:**
+  - Complaint submission flow updated: Select Department -> Select Service -> Area Type -> Sector/Jurisdiction.
+  - Dynamic address/location handling based on Area Type.
+- **Super Admin Dashboard:**
+  - Hierarchy page updated to manage Urban Sectors and Rural Jurisdictions.
+  - Department creation/editing updated to support multi-area types and service definition.
+  - Validations added to ensure Departments are assigned to valid Sectors/Jurisdictions.
+
+Files Created/Modified:
+- **Created Models:** `server/models/UrbanSector.js`, `server/models/RuralJurisdiction.js`
+- **Modified Models:** `server/models/Department.js` (areaTypes, servicesOffered), `server/models/Complaint.js` (service, departmentId, resolved location fields).
+- **Modified Routes:** `server/routes/superadmin.js` (CRUD for hierarchy), `server/routes/complaints.js` (Citizen hierarchy fetching, submit logic).
+- **Frontend:** `src/pages/SuperAdminDashboard.js` (UI updates), `src/pages/CitizenDashboard.js` (Form updates).
+
+---
+
+**Upcoming Implementation Plan (New Requirements)**
+
+**1. Officer Wage Description**
+- **Goal:** Allow DepartmentAdmins to set the wages of the field officer during their Registration.
+- **Implementation:**
+  - Add `wageType` field to Field Officer model (Enum: 'Monthly', 'Weekly', 'Hourly').
+  - Update DepartmentAdmins/Officer management update forms to include this selection.
+  - Display wage preference in DepartmentAdmin dashboards.
+
+**2. Semantic Analysis Flow (Sentiment Analysis)**
+- **Goal:** Automatically analyze complaint text to classify sentiment (Positive, Neutral, Negative) for prioritization.
+- **Workflow:**
+  1.  **Input:** Citizen submits complaint text via React Frontend.
+  2.  **Processing:** Backend receives text and triggers Sentiment Analysis.
+  3.  **Analysis Layer:** 
+      - **Model:** Pre-trained NLP Model (Python-based).
+      - **Tools:** Python (VADER, TextBlob, or BERT/Transformers).
+      - **Logic:**
+        - Analyze text.
+        - Assign Sentiment Label (Positive, Neutral, Negative).
+        - Assign Priority Score (e.g., Negative + Keywords = High Priority).
+  4.  **Storage:** Store `sentimentLabel` and `sentimentScore` in the Complaint database.
+  5.  **Output:** Dashboards display sentiment trends, highlight "Angry/Negative" complaints for immediate attention.
+
+- **Architecture Integration:**
+  - **Frontend (React):** Visual indicators for sentiment (Red/Yellow/Green badges).
+  - **Backend (Node.js):** Spawns a Python child process or calls a Python microservice to process text.
+  - **Database (MongoDB):** Schema update for `sentiment` field.
+
+- **Example Scenario:**
+  - *Complaint:* "The garbage has not been collected for 10 days and no one responds."
+  - *Analysis:* Negative Sentiment.
+  - *Action:* System flags as **High Priority**.
+
+**3. Host BERT Complaint Classifier Online (Option A: Remote Microservice)**
+- **Goal:** Ensure complaint classification never falls back because of missing local Python/Torch dependencies by running the BERT classifier on a hosted platform and calling it via HTTP from the Node.js server.
+
+- **Why needed (current issue):**
+  - Local `classify_complaint_bert.py` requires `torch` + `transformers`.
+  - If the server machine cannot run these (or has incompatible Python), backend falls back to heuristic classification.
+
+- **Target Architecture:**
+  1) **Python NLP Microservice (FastAPI)** loads `bert-base-uncased` once at startup and exposes:
+     - `GET /health` → `{ ok: true }`
+     - `POST /classify` → `{ category: string, confidence: number }`
+  2) **Node.js Backend** calls this microservice over HTTP for classification.
+  3) **Fallback policy (recommended):** If the microservice is down/unreachable, backend falls back to heuristic to avoid blocking complaint submission.
+
+- **Implementation Steps:**
+  1) Create a separate Python service repository (or a `server/nlp-service` folder) containing:
+     - FastAPI app (`app.py`) + `requirements.txt`
+     - Prototype-similarity classifier logic currently in `server/scripts/classify_complaint_bert.py`
+     - Dockerfile for deployment
+  2) Deploy the service to a platform that supports Docker and long-running APIs, e.g.:
+     - Google Cloud Run (recommended), Render, Railway, Fly.io, AWS ECS/Fargate
+  3) Add an environment variable to Node backend:
+     - `BERT_SERVICE_URL=https://<your-service-domain>`
+  4) Update backend classification flow in `server/services/complaintClassifierService.js`:
+     - Try remote call first (`POST ${BERT_SERVICE_URL}/classify`)
+     - On success: return `{ category, confidence, source: 'bert-remote' }`
+     - On failure: fallback to `{ category, confidence, source: 'heuristic' }`
+  5) Add monitoring/verification:
+     - Log `source` (`bert-remote` vs `heuristic`) for debugging
+     - Health-check endpoint and platform uptime monitoring
+
+- **Acceptance Criteria:**
+  - With `BERT_SERVICE_URL` configured, complaint classification uses `bert-remote` for valid requests.
+  - Heuristic fallback occurs only when the remote service is unavailable.
+
+End of report.

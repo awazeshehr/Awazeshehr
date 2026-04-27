@@ -1,0 +1,73 @@
+Project: Awaz-e-Shehr
+Report Date: 24-12-2025
+
+Objective: Neeche project ke mukhtasar modules aur unka zimma (kis file/folder mein functionality implement hai) Urdu mein bayan kiya gaya hai. Ye report developer / reviewer ke liye quick reference hai.
+
+1) Server (Backend)
+- `server/server.js`:
+  - Express app bootstrap, static `uploads` serve, Socket.IO setup, socket authentication (JWT), realtime message templates and realtime message handling (complaint rooms, direct chat), exports global `io`.
+- `server/config/database.js`:
+  - MongoDB connection logic (MONGODB_URI), connection error handling.
+- `server/routes/auth.js`:
+  - User login/register, OTP lifecycle (send/verify/reset), social login, bootstrap superadmin, password reset.
+- `server/routes/complaints.js`:
+  - (Contains complaint CRUD APIs) submit complaints, list, update status, attach files, filtering, assignment endpoints.
+- `server/routes/chat.js`:
+  - Chat related REST endpoints (message history, direct messages retrieval) — complimented by realtime events in `server.js`.
+- `server/routes/notifications.js`:
+  - Create/fetch notifications, mark-read APIs.
+- `server/routes/dashboard.js`, `performance.js`, `profile.js`, `superadmin.js`:
+  - Dashboard metrics, performance reports, profile management, superadmin utilities.
+- `server/middleware/auth.js` and `server/middleware/authorize.js`:
+  - API authentication (JWT) and role-based access control.
+- `server/models/*.js` (e.g., `Complaint.js`, `Message.js`, `User.js`, `FieldOfficer.js`, `Department.js`, `Notification.js`, `OTP.js`, `SuperAdmin.js`):
+  - Mongoose schemas and data model definitions for all domain entities.
+- `server/utils/mailer.js`:
+  - Email sending utilities (OTP and notifications).
+- `server/utils/validation.js`:
+  - Validation helpers for emails, CNIC, phone, password policies.
+- `server/uploads/`:
+  - Static folder where uploaded images/files are stored and served via `/uploads` route.
+
+2) Mobile (Citizen App)
+- `mobile/citizen-app/App.js`:
+  - App entry, screen navigation state (login, register, otp, home, submit complaint, my complaints, notifications, chatbot, officer chat) and token management (SecureStore / localStorage).
+- `mobile/citizen-app/screens/*`:
+  - Individual screens: `LoginScreen`, `RegisterScreen`, `OtpScreen`, `SubmitComplaintScreen`, `MyComplaintsScreen`, `NotificationsScreen`, `OfficerChatScreen`, `ChatbotScreen`, `ForgotPasswordScreen`, etc.
+- `mobile/citizen-app/api/client.js`:
+  - API client wrapper for hitting backend endpoints and managing JWT token for mobile.
+- `mobile/citizen-app/components/*` and `assets/`:
+  - Reusable UI components and images/icons used in mobile app.
+
+3) Web Frontend
+- `src/` (React web app):
+  - `src/index.js`, `src/App.js`, `src/pages/*` (dashboards for citizen, dept-admin, field-officer, superadmin), `src/components/*` (shared UI components), `src/services/dataService.js` (web API client), `src/utils/*`.
+- `public/` and `build/`:
+  - Static assets and production build output.
+
+4) Shared libraries & scripts
+- `package.json` (root) and `server/package.json`:
+  - Project dependencies and helpful scripts (`start`, `dev`, `server`, `client`).
+- Key client/server libraries: `react`, `react-dom`, `react-router-dom`, `socket.io-client`, `express`, `mongoose`, `socket.io`, `bcryptjs`, `jsonwebtoken`, `exceljs`, `jspdf`, `jspdf-autotable`, `recharts`.
+
+5) Key Functional Flows (where to look)
+- Authentication & OTP: `server/routes/auth.js` + `server/utils/mailer.js`.
+- Complaint creation & storage: `server/routes/complaints.js` + `server/models/Complaint.js` + `server/uploads/`.
+- Realtime communication: `server/server.js` (Socket.IO) and client sockets in mobile/web chat screens.
+- Assignment logic: partially in `server/server.js` (auto-assign during socket sendMessage) and in `server/routes/complaints.js` (possible manual assign endpoints).
+- Notifications: `server/routes/notifications.js` + socket emits from server.
+- Dashboards & Reports: `server/routes/dashboard.js`, `server/routes/performance.js`, and frontend `src/pages/*` using `exceljs`/`jspdf` for exports.
+
+6) Extension points (recommended files to edit for features)
+- Add per-city/district logic: edit `server/models/Complaint.js`, `server/routes/complaints.js`, and `server/models/Department.js` (add allowedCities) and `server/server.js` (socket room names/assignment logic).
+- Sentiment / feedback analysis: add `server/services/sentimentService.js`, extend `server/models/Message.js` to store `sentimentScore`/`labels`, and call service on message create.
+- Migration scripts: create `server/scripts/migrate_add_city_fields.js` for backfill.
+
+7) Quick references
+- Test endpoint to check server: `GET /api/test` (defined in `server/server.js`).
+- DB health: `GET /api/db/health` (defined in `server/server.js`).
+
+8) Contacts / next steps
+- Agar chahen to main specific module ki detailed walkthrough, refactor ya feature implementation (e.g., per‑city scoping or sentiment analysis) code likh kar de sakta hoon — bataiye konsa module detail chahiye.
+
+End of report.

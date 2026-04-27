@@ -1,0 +1,137 @@
+Awaz-e-Shehr — Role API & Screen Mapping
+Date: 24-12-2025
+
+Purpose: Har role ke liye exact API endpoints, socket events, aur frontend/mobile screen mapping. Use this as a developer checklist to implement RBAC, validation and UI hooks.
+
+1) Common notes
+- All protected APIs require JWT in Authorization: Bearer <token> header.
+- RBAC middleware files: server/middleware/auth.js and server/middleware/authorize.js
+- Location hierarchy must be provided on complaint create: countryId, provinceId, divisionId (optional), districtId, tehsilId (optional), unionCouncilId (optional).
+
+2) Citizen (شہری)
+APIs
+- POST /api/auth/register -> body: { fullName, email, phone, cnic, password }
+- POST /api/auth/verify-otp -> { email, otp }
+- POST /api/auth/login -> { identifier, password }
+- POST /api/auth/forgot-password -> { email }
+- POST /api/auth/reset-password -> { email, otp, newPassword, confirmPassword }
+- POST /api/complaints -> Create complaint
+    required body: { category, description, location:{lat,lng,address}, countryId, provinceId, districtId, tehsilId, unionCouncilId, media[] }
+- GET /api/complaints?userId=<me> -> list own complaints (support pagination & filters)
+- GET /api/complaints/:id -> view complaint detail (only if userId === requester)
+- POST /api/complaints/:id/feedback -> { rating, comment } (only citizen who owns complaint)
+- GET /api/notifications -> list notifications
+- Socket events (client emits):
+    - connect(auth: { token })
+    - emit: joinComplaint(complaintId)
+    - emit: sendMessage({ complaintId, templateKey, notes })
+    - listen: newMessage, newDirectMessage, errorMessage
+
+Mobile screens
+- LoginScreen -> POST /api/auth/login
+- RegisterScreen -> POST /api/auth/register
+- OtpScreen -> POST /api/auth/verify-otp
+- SubmitComplaintScreen -> POST /api/complaints
+- MyComplaintsScreen -> GET /api/complaints?userId=<me>
+- OfficerChatScreen -> socket joinComplaint + sendMessage; GET /api/chat/history?complaintId=
+- NotificationsScreen -> GET /api/notifications
+
+3) Field Officer (فیلڈ آفیسر)
+APIs
+- POST /api/auth/login
+- GET /api/complaints/assigned -> returns complaints assignedTo officer (server/routes/complaints.js -> use assignedTo or query by tehsil/district scope)
+- GET /api/complaints/unassigned?scope=tehsil|district -> list unassigned in officer's scope
+- POST /api/complaints/:id/assign -> assign to self (or via admin) (restricted)
+- POST /api/complaints/:id/status -> { status } (in-progress, resolved)
+- POST /api/complaints/:id/evidence -> upload evidence
+- POST /api/complaints/:id/checkin -> { lat, lng, address }
+- GET /api/notifications
+- Socket events: connect(auth), joinComplaint, sendMessage, listen newMessage
+
+Permissions & Scope
+- Server must check officer jurisdiction: officer document should include fields: provinceIds[], divisionIds[], districtIds[], tehsilIds[].
+- Middleware: ensure complaint.districtId/tehsilId is within officer's scope before returning or allowing actions.
+
+Mobile / Web screens
+- Officer Dashboard (web/mobile) -> GET /api/complaints/assigned, GET /api/complaints/unassigned
+- ComplaintDetailScreen -> allow status updates, evidence upload, check-in (POST endpoints above), chat integration.
+
+4) Department Admin (ڈیپارٹمنٹ ایڈمن)
+APIs
+- POST /api/auth/login
+- GET /api/complaints?department=<dept>&scope=division|district&ids[]= -> list complaints in admin scope
+- POST /api/complaints/:id/assign -> { officerId }
+- PATCH /api/field-officers/:id -> manage officer scope/activation
+- GET /api/reports?from=&to=&provinceId=&districtId= -> aggregated metrics (uses indexes)
+- POST /api/notifications/send -> to officers in scope
+
+Permissions
+- Department admin record must include allowedDivisionIds[] and allowedDistrictIds[]. Middleware must enforce.
+
+Web screens
+- Dept Admin Dashboard -> lists complaints, filters per district/division, assign actions, exports via Excel/PDF endpoints.
+- Officer Management Screen -> manage officers and their scope.
+
+5) Super Admin (سپر ایڈمن)
+APIs
+- Full access to all complaint APIs without scope restriction.
+- CRUD for administrative entities:
+    - POST/GET/PUT/DELETE /api/admin/countries
+    - POST/GET/PUT/DELETE /api/admin/provinces
+    - POST/GET/PUT/DELETE /api/admin/divisions
+    - POST/GET/PUT/DELETE /api/admin/districts
+    - POST/GET/PUT/DELETE /api/admin/tehsils
+    - POST/GET/PUT/DELETE /api/admin/union-councils
+- Migration utilities:
+    - POST /api/admin/migrate/complaints -> runs migration mapping legacy city/district to new hierarchy (restricted)
+
+Web screens
+- Super Admin Console -> manage geographic data, departments, global reports, user management, bootstrap superadmin.
+
+6) Auto-Routing Logic (backend service)
+- New service: server/services/assignmentService.js responsibilities:
+    - selectDepartment(category, provinceId, districtId) -> returns departmentId
+    - selectOfficer(departmentId, provinceId, districtId, tehsilId) -> choose active officer in that tehsil/district using round-robin or least-loaded
+    - routeComplaint(complaint) -> apply rules: Category -> Department -> Province -> District -> Tehsil
+    - if complaint.isFederal === true: bypass province limits and route to federal department pool
+- Integrate routeComplaint in POST /api/complaints and in socket auto-assign flow.
+
+7) Migration Strategy (safe plan)
+- Create migration script: server/scripts/migrate_legacy_complaints.js
+  - Steps:
+    1) Back up existing complaints collection to complaints_backup_YYYYMMDD.
+    2) For each complaint without countryId/provinceId/districtId/tehsilId:
+       - Map existing location.city or location.address to a District using mapping table (server/data/city_to_district_map.json)
+       - Set countryId to Pakistan, provinceId inferred, districtId set. Mark fields tehsilId and unionCouncilId = null and add marker: legacy: true
+       - Add timeline entry: { type: 'migration', message: 'Backfilled hierarchy (legacy)', at: Date.now() }
+    3) Re-run index build.
+  - Provide dry-run mode --dry=true option.
+
+8) Indexing & Performance
+- Ensure indexes exist:
+    complaintSchema.index({ countryId:1, provinceId:1, divisionId:1, districtId:1, tehsilId:1, unionCouncilId:1 });
+    complaintSchema.index({ provinceId:1, districtId:1, status:1, createdAt:-1 });
+    complaintSchema.index({ assignedTo:1, department:1, status:1 });
+- Use compound indexes for reporting queries.
+
+9) Files to edit (implementation checklist)
+- server/models/Complaint.js (done)
+- server/models/FieldOfficer.js -> add jurisdiction arrays: provinces[], divisions[], districts[], tehsils[], unionCouncils[]
+- server/routes/complaints.js -> require hierarchical fields, call assignmentService.routeComplaint, enforce RBAC on GET/UPDATE
+- server/services/assignmentService.js -> new service
+- server/middleware/authorize.js -> update to check hierarchical scope for roles
+- server/scripts/migrate_legacy_complaints.js -> migration script
+- server/scripts/seed_pakistan_admins.js (created) -> run to seed country/provinces
+
+10) Running seeds & migration
+- Install dependencies and set MONGODB_URI and NODE_ENV in .env
+- Seed provinces: node server/scripts/seed_pakistan_admins.js
+- Dry-run migrate: node server/scripts/migrate_legacy_complaints.js --dry
+- Run full migration after backup.
+
+If you want, I can now:
+- implement FieldOfficer jurisdiction fields and middleware checks,
+- add assignmentService skeleton and update POST /api/complaints to call it,
+- create migration script template (dry-run enabled).
+
+Batao konsa kaam pehle karna hai; main code abhi implement kar dunga.
