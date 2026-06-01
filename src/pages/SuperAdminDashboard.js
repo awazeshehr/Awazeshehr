@@ -1200,7 +1200,7 @@ const SuperAdminDashboard = () => {
           <div className="app-branding">
             <img className="app-logo" src={`${process.env.PUBLIC_URL}/awazeshehr.jpeg`} alt={t('appTitle')} />
             <h2>{t('appTitle')}</h2>
-            <p>Super Admin Command</p>
+            <p>{t('superAdminCommand')}</p>
           </div>
           <button
             type="button"
@@ -1249,7 +1249,7 @@ const SuperAdminDashboard = () => {
               <h3>{user?.fullName || t('superAdmin')}</h3>
               <p>
                 {t('systemAdministration')}
-                <span className="role-badge super-admin">Primary Authority</span>
+                <span className="role-badge super-admin">{t('primaryAuthority')}</span>
               </p>
             </div>
           </div>
@@ -1259,7 +1259,7 @@ const SuperAdminDashboard = () => {
             </button>
             <div className="status-indicator">
               <div className="status-dot online"></div>
-              <span>System Live</span>
+              <span>{t('systemLive')}</span>
             </div>
           </div>
         </div>
@@ -1267,31 +1267,19 @@ const SuperAdminDashboard = () => {
         {activePage === 'overview' && (
           <div className="page-content active">
             <div className="section-header">
-              <h1 className="form-title">Dashboard Overview</h1>
-              <div className="map-search">
-                <div className="input-with-icon">
-                  <i className="fas fa-search input-icon"></i>
-                  <input 
-                    className="sa-input map-search-input" 
-                    placeholder={t('searchLocation') || 'Analyze specific area...'} 
-                    value={mapSearchQuery} 
-                    onChange={e => setMapSearchQuery(e.target.value)} 
-                  />
-                </div>
-                <button className="btn btn-primary btn-sm" onClick={searchLocationOnMap}>Analyze</button>
-              </div>
+              <h1 className="form-title">{t('dashboardOverview')}</h1>
             </div>
 
             <div className="dashboard-cards">
               {[
-                { value: complaints.length, title: 'Total Operations', icon: 'fa-clipboard-check', type: 'total' },
-                { value: complaints.filter(c => c.status === 'pending').length, title: 'Attention Required', icon: 'fa-exclamation-circle', type: 'pending' },
-                { value: complaints.filter(c => c.status === 'in-progress').length, title: 'Active Missions', icon: 'fa-running', type: 'progress' },
-                { value: complaints.filter(c => c.status === 'resolved').length, title: 'Completed', icon: 'fa-check-double', type: 'resolved' },
-                { value: deps.length, title: 'Executive Units', icon: 'fa-building', type: 'departments' },
-                { value: `${feedbackAnalytics.positivePercent}%`, title: 'Public Approval', icon: 'fa-user-check', type: 'positive' },
-                { value: `${feedbackAnalytics.negativePercent}%`, title: 'Critical Issues', icon: 'fa-user-times', type: 'negative' },
-                { value: `${feedbackAnalytics.overallSatisfactionScore}%`, title: 'System Trust', icon: 'fa-medal', type: 'satisfaction' }
+                { value: complaints.length, title: t('totalOperations'), icon: 'fa-clipboard-check', type: 'total' },
+                { value: complaints.filter(c => c.status === 'pending').length, title: t('attentionRequired'), icon: 'fa-exclamation-circle', type: 'pending' },
+                { value: complaints.filter(c => c.status === 'in-progress').length, title: t('activeMissions'), icon: 'fa-running', type: 'progress' },
+                { value: complaints.filter(c => c.status === 'resolved').length, title: t('completed'), icon: 'fa-check-double', type: 'resolved' },
+                { value: deps.length, title: t('executiveUnits'), icon: 'fa-building', type: 'departments' },
+                { value: `${feedbackAnalytics.positivePercent}%`, title: t('publicApproval'), icon: 'fa-user-check', type: 'positive' },
+                { value: `${feedbackAnalytics.negativePercent}%`, title: t('criticalIssues'), icon: 'fa-user-times', type: 'negative' },
+                { value: `${feedbackAnalytics.overallSatisfactionScore}%`, title: t('systemTrust'), icon: 'fa-medal', type: 'satisfaction' }
               ].map(card => (
                 <div key={card.type} className="card">
                   <div className="card-header">
@@ -1309,7 +1297,21 @@ const SuperAdminDashboard = () => {
 
             <div className="sa-grid">
               <div className="sa-panel" style={{ gridColumn: 'span 2' }}>
-                <h4 className="section-subtitle">Geo-Spatial Intelligence</h4>
+                <div className="sa-map-header">
+                  <h4 className="section-subtitle sa-map-title">{t('geoSpatialIntelligence')}</h4>
+                  <div className="sa-map-search">
+                    <div className="input-with-icon">
+                      <i className="fas fa-search input-icon"></i>
+                      <input
+                        className="sa-input sa-input-sm map-search-input"
+                        placeholder={t('searchLocation')}
+                        value={mapSearchQuery}
+                        onChange={e => setMapSearchQuery(e.target.value)}
+                      />
+                    </div>
+                    <button className="btn btn-primary btn-sm" onClick={searchLocationOnMap}>{t('analyze')}</button>
+                  </div>
+                </div>
                 <div className="map-wrapper" style={{ borderRadius: '16px', overflow: 'hidden', height: '500px' }}>
                   <div ref={mapRef} style={{ width: '100%', height: '100%', zIndex: 1 }}></div>
                 </div>
@@ -1412,7 +1414,7 @@ const SuperAdminDashboard = () => {
                   <div className="sa-form-section-title">{t('services') || 'Services'}</div>
                   <div className="form-field">
                     <div className="form-label">{t('services') || 'Services (Sub-categories)'}</div>
-                    <input className="sa-input" placeholder="e.g. Water Supply, Pipeline Repair" value={newDep.servicesOffered} onChange={e => setNewDep({ ...newDep, servicesOffered: e.target.value })} />
+                    <input className="sa-input" placeholder={t('servicesPlaceholder')} value={newDep.servicesOffered} onChange={e => setNewDep({ ...newDep, servicesOffered: e.target.value })} />
                     <div className="form-helper">{t('servicesHelper') || 'Comma-separated list'}</div>
                   </div>
                   <div className="sa-form-section-title">{t('addressValidation') || 'Address Validation'}</div>
@@ -1555,7 +1557,7 @@ const SuperAdminDashboard = () => {
                   <form className="sa-form" onSubmit={createUrbanSector}>
                     <div className="form-field">
                       <div className="form-label">{t('sectorName') || 'Sector Name (e.g. F-7)'}</div>
-                      <input className="sa-input" placeholder="F-7" value={newSector.name} onChange={e => setNewSector({ ...newSector, name: e.target.value })} required />
+                      <input className="sa-input" placeholder={t('sectorExample')} value={newSector.name} onChange={e => setNewSector({ ...newSector, name: e.target.value })} required />
                     </div>
                     <button className="btn btn-primary" type="submit">{t('add')}</button>
                   </form>
@@ -1594,7 +1596,7 @@ const SuperAdminDashboard = () => {
                   <form className="sa-form" onSubmit={createRuralJurisdiction}>
                     <div className="form-field">
                       <div className="form-label">{t('jurisdictionName') || 'Jurisdiction Name'}</div>
-                      <input className="sa-input" placeholder="Bhara Kahu" value={newJurisdiction.name} onChange={e => setNewJurisdiction({ ...newJurisdiction, name: e.target.value })} required />
+                      <input className="sa-input" placeholder={t('jurisdictionExample')} value={newJurisdiction.name} onChange={e => setNewJurisdiction({ ...newJurisdiction, name: e.target.value })} required />
                     </div>
                     <button className="btn btn-primary" type="submit">{t('add')}</button>
                   </form>
@@ -1715,14 +1717,14 @@ const SuperAdminDashboard = () => {
                   </div>
                   <div className="form-field">
                     <div className="form-label">{t('policyName') || 'Policy Name'}</div>
-                    <input className="sa-input" value={newPolicy.name} onChange={e => setNewPolicy(prev => ({ ...prev, name: e.target.value }))} placeholder="Routing Policy" />
+                    <input className="sa-input" value={newPolicy.name} onChange={e => setNewPolicy(prev => ({ ...prev, name: e.target.value }))} placeholder={t('routingPolicyPlaceholder')} />
                   </div>
                   <div className="form-field">
                     <div className="form-label">{t('areaType') || 'Area Type'}</div>
                     <select className="sa-select" value={newPolicy.areaType} onChange={e => setNewPolicy(prev => ({ ...prev, areaType: e.target.value, sector: '', ruralJurisdiction: '' }))}>
                       <option value="Any">{t('any') || 'Any'}</option>
-                      <option value="Urban">Urban</option>
-                      <option value="Rural">Rural</option>
+                      <option value="Urban">{t('urban')}</option>
+                      <option value="Rural">{t('rural')}</option>
                     </select>
                   </div>
                   
@@ -1783,7 +1785,7 @@ const SuperAdminDashboard = () => {
                   </div>
                   <div className="form-field">
                     <div className="form-label">{t('keywords') || 'Keywords (comma-separated)'}</div>
-                    <input className="sa-input" value={newPolicy.keywords} onChange={e => setNewPolicy(prev => ({ ...prev, keywords: e.target.value }))} placeholder="water, leak, burst" />
+                    <input className="sa-input" value={newPolicy.keywords} onChange={e => setNewPolicy(prev => ({ ...prev, keywords: e.target.value }))} placeholder={t('keywordsExample')} />
                   </div>
                   <div className="form-field">
                     <div className="form-label">{t('backlogThreshold') || 'Backlog Threshold (max open)'}</div>
@@ -1801,13 +1803,13 @@ const SuperAdminDashboard = () => {
                           setNewPolicy(prev => ({ ...prev, daysOfWeek: values }));
                         }}
                       >
-                        <option value="0">Sun</option>
-                        <option value="1">Mon</option>
-                        <option value="2">Tue</option>
-                        <option value="3">Wed</option>
-                        <option value="4">Thu</option>
-                        <option value="5">Fri</option>
-                        <option value="6">Sat</option>
+                        <option value="0">{t('sun')}</option>
+                        <option value="1">{t('mon')}</option>
+                        <option value="2">{t('tue')}</option>
+                        <option value="3">{t('wed')}</option>
+                        <option value="4">{t('thu')}</option>
+                        <option value="5">{t('fri')}</option>
+                        <option value="6">{t('sat')}</option>
                       </select>
                       <input className="sa-input" type="time" value={newPolicy.startTime} onChange={e => setNewPolicy(prev => ({ ...prev, startTime: e.target.value }))} />
                       <input className="sa-input" type="time" value={newPolicy.endTime} onChange={e => setNewPolicy(prev => ({ ...prev, endTime: e.target.value }))} />
@@ -1879,8 +1881,8 @@ const SuperAdminDashboard = () => {
                       value={routingSim.areaType}
                       onChange={e => setRoutingSim(prev => ({ ...prev, areaType: e.target.value, sector: '', ruralJurisdiction: '' }))}
                     >
-                      <option value="Urban">Urban</option>
-                      <option value="Rural">Rural</option>
+                      <option value="Urban">{t('urban')}</option>
+                      <option value="Rural">{t('rural')}</option>
                     </select>
                   </div>
                   {routingSim.areaType === 'Urban' ? (
@@ -1974,10 +1976,10 @@ const SuperAdminDashboard = () => {
                       </div>
                     </div>
                     <div className="sa-item-details">
-                      <div><strong>Urban:</strong> {(routingDiagnostics?.urbanGaps || []).length}</div>
-                      <div><strong>Rural:</strong> {(routingDiagnostics?.ruralGaps || []).length}</div>
-                      {(routingDiagnostics?.urbanGaps || []).slice(0, 4).map(g => <div key={`ug-${g.name}`}>Urban: {g.name}</div>)}
-                      {(routingDiagnostics?.ruralGaps || []).slice(0, 4).map(g => <div key={`rg-${g.name}`}>Rural: {g.name}</div>)}
+                      <div><strong>{t('urban')}:</strong> {(routingDiagnostics?.urbanGaps || []).length}</div>
+                      <div><strong>{t('rural')}:</strong> {(routingDiagnostics?.ruralGaps || []).length}</div>
+                      {(routingDiagnostics?.urbanGaps || []).slice(0, 4).map(g => <div key={`ug-${g.name}`}>{t('urban')}: {g.name}</div>)}
+                      {(routingDiagnostics?.ruralGaps || []).slice(0, 4).map(g => <div key={`rg-${g.name}`}>{t('rural')}: {g.name}</div>)}
                     </div>
                   </div>
 
@@ -2154,21 +2156,20 @@ const SuperAdminDashboard = () => {
                     </div>
                   </div>
                   <p className="sa-subtitle">
-                    Define target resolution time (in hours) for each complaint category. These
-                    SLAs shape how you measure department performance and escalation.
+                    {t('slaPoliciesHelp')}
                   </p>
                   <div className="sa-data-list-container">
                     <table className="sa-table sa-table-compact sa-table-striped">
                       <thead>
                         <tr>
-                          <th>Category</th>
-                          <th>Target Resolution (hours)</th>
+                          <th>{t('category')}</th>
+                          <th>{t('targetResolutionHours')}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {['water', 'electricity', 'sanitation', 'roads', 'waste', 'other'].map(cat => (
                           <tr key={cat}>
-                            <td>{cat.charAt(0).toUpperCase() + cat.slice(1)}</td>
+                            <td>{t(cat)}</td>
                             <td>
                               <input
                                 type="number"
@@ -2206,8 +2207,7 @@ const SuperAdminDashboard = () => {
                     </div>
                   </div>
                   <p className="sa-subtitle">
-                    Control when the system sends reminders for pending complaints and when they
-                    should be escalated to higher authorities.
+                    {t('reminderEscalationHelp')}
                   </p>
                   <div className="sa-form">
                     <div className="form-field">
@@ -3019,14 +3019,14 @@ const SuperAdminDashboard = () => {
                             setEditingDep({ ...editingDep, areaTypes: newTypes });
                           }} 
                         />
-                        Rural
+                        {t('rural')}
                       </label>
                     </div>
                   </div>
 
                   {editingDep.areaTypes.includes('Urban') && (
                     <div className="form-field">
-                      <div className="form-label">{t('sectors') || 'Sectors'} (Select Multiple)</div>
+                      <div className="form-label">{t('sectors')} ({t('selectMultiple')})</div>
                       <select 
                         multiple 
                         className="sa-select" 
@@ -3041,13 +3041,13 @@ const SuperAdminDashboard = () => {
                           <option key={s._id} value={s.name}>{s.name}</option>
                         ))}
                       </select>
-                      <div className="form-helper">Hold Ctrl/Cmd to select multiple</div>
+                      <div className="form-helper">{t('multiSelectHelper')}</div>
                     </div>
                   )}
 
                   {editingDep.areaTypes.includes('Rural') && (
                     <div className="form-field">
-                      <div className="form-label">{t('ruralJurisdictions') || 'Rural Jurisdictions'} (Select Multiple)</div>
+                      <div className="form-label">{t('ruralJurisdictions')} ({t('selectMultiple')})</div>
                       <select 
                         multiple 
                         className="sa-select" 
@@ -3062,7 +3062,7 @@ const SuperAdminDashboard = () => {
                           <option key={j._id} value={j.name}>{j.name}</option>
                         ))}
                       </select>
-                      <div className="form-helper">Hold Ctrl/Cmd to select multiple</div>
+                      <div className="form-helper">{t('multiSelectHelper')}</div>
                     </div>
                   )}
 

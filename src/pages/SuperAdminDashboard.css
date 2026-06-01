@@ -738,6 +738,50 @@ body {
   box-shadow: var(--card-shadow);
 }
 
+.sa-map-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.sa-map-title {
+  margin-bottom: 0;
+}
+
+.sa-map-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.sa-map-search .input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.sa-map-search .input-icon {
+  position: absolute;
+  left: 12px;
+  color: #94a3b8;
+  pointer-events: none;
+  font-size: 0.95rem;
+}
+
+.sa-map-search .map-search-input {
+  padding-left: 36px;
+  min-width: 280px;
+}
+
+.sa-map-search .btn-sm {
+  padding: 10px 16px;
+  border-radius: 12px;
+}
+
 .sa-form.sa-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
