@@ -1167,6 +1167,7 @@ const ComplaintsList = ({ complaints, onViewDetails, onOpenChat }) => {
               <th>{t('title')}</th>
               <th>{t('category')}</th>
               <th>{t('location')}</th>
+              <th>{t('sector') || 'Sector'}</th>
               <th>{t('status')}</th>
               <th>{t('assignedDate')}</th>
               <th>{t('action')}</th>
@@ -1179,6 +1180,7 @@ const ComplaintsList = ({ complaints, onViewDetails, onOpenChat }) => {
                 <td>{complaint.title}</td>
                 <td>{complaint.category}</td>
                 <td>{complaint.location}</td>
+                <td>{complaint.subsector ? `${complaint.sector || ''} • ${complaint.subsector}` : (complaint.sector || '-')}</td>
                 <td>
                   <span className={`status-badge status-${complaint.status}`}>
                     {complaint.status === 'progress' || complaint.status === 'in-progress' ? t('inProgress') : 
@@ -1643,6 +1645,10 @@ const ComplaintDetailsModal = ({ complaint, onClose, onStatusUpdate, onUploadEvi
             <div className="detail-item">
               <div className="detail-label">Location</div>
               <div className="detail-value">{complaint.location}</div>
+            </div>
+            <div className="detail-item">
+              <div className="detail-label">Sector</div>
+              <div className="detail-value">{complaint.subsector ? `${complaint.sector || ''} • ${complaint.subsector}` : (complaint.sector || '—')}</div>
             </div>
             
             <div className="detail-item" style={{gridColumn: '1 / -1'}}>

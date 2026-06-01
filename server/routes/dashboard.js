@@ -144,7 +144,7 @@ function escapeRegExp(input) {
 router.get('/complaints/dept-admin', auth, authorize('dept-admin'), async (req, res) => {
   try {
     const user = req.user;
-    const { search, category, status, priority, officer, fromDate, toDate, area, region, overdueOnly } = req.query;
+    const { search, category, status, priority, officer, fromDate, toDate, area, region, overdueOnly, sector, subsector } = req.query;
     
     
     const filter = {};
@@ -195,6 +195,14 @@ router.get('/complaints/dept-admin', auth, authorize('dept-admin'), async (req, 
         { 'location.address': regionRegex }
       ]);
     }
+
+    if (sector && sector !== 'all') {
+      filter['location.sector'] = new RegExp(`^${escapeRegExp(sector)}$`, 'i');
+    }
+
+    if (subsector && subsector !== 'all') {
+      filter['location.subsector'] = new RegExp(`^${escapeRegExp(subsector)}$`, 'i');
+    }
     
     if (String(overdueOnly) === 'true') {
       filter.dueDate = { $lt: new Date() };
@@ -214,6 +222,9 @@ router.get('/complaints/dept-admin', auth, authorize('dept-admin'), async (req, 
         description: complaint.description,
         category: complaint.category,
         location: complaint.location?.address || 'Location not specified',
+        areaType: complaint.location?.areaType || '',
+        sector: complaint.location?.sector || '',
+        subsector: complaint.location?.subsector || '',
         status: complaint.status,
         priority: complaint.priority,
         priorityColor: complaint.priorityColor || '',
@@ -257,6 +268,9 @@ router.get('/complaints/field-officer', auth, authorize('field-officer'), async 
       description: complaint.description,
       category: complaint.category,
       location: complaint.location?.address,
+      areaType: complaint.location?.areaType || '',
+      sector: complaint.location?.sector || '',
+      subsector: complaint.location?.subsector || '',
       status: complaint.status,
       priority: complaint.priority,
       citizenName: complaint.userId?.fullName || 'N/A',
@@ -276,7 +290,7 @@ router.get('/complaints/field-officer', auth, authorize('field-officer'), async 
 // Get complaints for super admin
 router.get('/complaints/super-admin', auth, authorize('super-admin'), async (req, res) => {
   try {
-    const { search, status, category, priority } = req.query;
+    const { search, status, category, priority, sector, subsector } = req.query;
     const filter = {};
     if (search) {
       filter.$or = [
@@ -287,6 +301,8 @@ router.get('/complaints/super-admin', auth, authorize('super-admin'), async (req
     if (status && status !== 'all') filter.status = status;
     if (category && category !== 'all') filter.category = category;
     if (priority && priority !== 'all') filter.priority = priority;
+    if (sector && sector !== 'all') filter['location.sector'] = new RegExp(`^${escapeRegExp(sector)}$`, 'i');
+    if (subsector && subsector !== 'all') filter['location.subsector'] = new RegExp(`^${escapeRegExp(subsector)}$`, 'i');
 
     const complaints = await Complaint.find(filter)
       .populate('assignedTo', 'fullName email')
@@ -300,6 +316,9 @@ router.get('/complaints/super-admin', auth, authorize('super-admin'), async (req
       description: complaint.description,
       category: complaint.category,
       location: complaint.location?.address || 'Location not specified',
+      areaType: complaint.location?.areaType || '',
+      sector: complaint.location?.sector || '',
+      subsector: complaint.location?.subsector || '',
       status: complaint.status,
       priority: complaint.priority,
       citizenName: complaint.userId?.fullName || 'N/A',

@@ -246,8 +246,32 @@ class DataService {
   async saListUrbanSectors() {
     return this.apiCall('/superadmin/urban-sectors');
   }
+  async saUpdateUrbanSector(id, payload) {
+    return this.apiCall(`/superadmin/urban-sectors/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+  }
   async saDeleteUrbanSector(id) {
     return this.apiCall(`/superadmin/urban-sectors/${id}`, { method: 'DELETE' });
+  }
+  async saListSubsectors(sectorId) {
+    return this.apiCall(`/superadmin/urban-sectors/${sectorId}/subsectors`);
+  }
+  async saCreateSubsector(payload) {
+    return this.apiCall('/superadmin/subsectors', { method: 'POST', body: JSON.stringify(payload) });
+  }
+  async saAutoGenerateSubsectors(sectorId) {
+    return this.apiCall(`/superadmin/urban-sectors/${sectorId}/subsectors/auto-generate`, { method: 'POST' });
+  }
+  async saUpdateSubsector(id, payload) {
+    return this.apiCall(`/superadmin/subsectors/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+  }
+  async saDeleteSubsector(id) {
+    return this.apiCall(`/superadmin/subsectors/${id}`, { method: 'DELETE' });
+  }
+  async saGetSubsectorJurisdictions(subsectorId) {
+    return this.apiCall(`/superadmin/subsectors/${subsectorId}/jurisdictions`);
+  }
+  async saSetSubsectorJurisdictions(subsectorId, departmentIds) {
+    return this.apiCall(`/superadmin/subsectors/${subsectorId}/jurisdictions`, { method: 'PUT', body: JSON.stringify({ departmentIds }) });
   }
   async saCreateRuralJurisdiction(payload) {
     return this.apiCall('/superadmin/rural-jurisdictions', { method: 'POST', body: JSON.stringify(payload) });

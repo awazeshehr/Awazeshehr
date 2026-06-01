@@ -38,6 +38,14 @@ const SuperAdminDashboard = () => {
   const [urbanSectors, setUrbanSectors] = useState([]);
   const [ruralJurisdictions, setRuralJurisdictions] = useState([]);
   const [newSector, setNewSector] = useState({ name: '' });
+  const [autoGenerateSubsectorsOnCreate, setAutoGenerateSubsectorsOnCreate] = useState(true);
+  const [selectedUrbanSectorId, setSelectedUrbanSectorId] = useState('');
+  const [subsectors, setSubsectors] = useState([]);
+  const [newSubsectorName, setNewSubsectorName] = useState('');
+  const [selectedSubsectorId, setSelectedSubsectorId] = useState('');
+  const [subsectorDepartmentIds, setSubsectorDepartmentIds] = useState([]);
+  const [subsectorLoading, setSubsectorLoading] = useState(false);
+  const [jurisdictionLoading, setJurisdictionLoading] = useState(false);
   const [newJurisdiction, setNewJurisdiction] = useState({ name: '' });
   const [routingPolicies, setRoutingPolicies] = useState([]);
   const [newPolicy, setNewPolicy] = useState({
@@ -416,7 +424,7 @@ const SuperAdminDashboard = () => {
 
   const validateIslamabadAddress = async (rawAddress, dep) => {
     const address = String(rawAddress || '').trim();
-    if (!address) return { ok: false, message: 'Address is required' };
+    if (!address) return { ok: false, message: t('addressIsRequired') || 'Address is required' };
 
     const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&q=${encodeURIComponent(address)}`;
     const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
@@ -425,7 +433,7 @@ const SuperAdminDashboard = () => {
     const displayName = String(top?.display_name || '').trim();
     const displayLower = displayName.toLowerCase();
     if (!displayName || !displayLower.includes('islamabad')) {
-      return { ok: false, message: 'Address must be within Islamabad', displayName: displayName || '' };
+      return { ok: false, message: t('addressMustBeWithinIslamabad') || 'Address must be within Islamabad', displayName: displayName || '' };
     }
 
     return { ok: true, displayName };
@@ -497,6 +505,67 @@ const SuperAdminDashboard = () => {
       console.error('Hierarchy load error:', e);
     }
   }, []);
+
+  useEffect(() => {
+    if (activePage !== 'hierarchy') return;
+    if (hierarchyTab !== 'urban') return;
+    if (selectedUrbanSectorId) return;
+    const first = Array.isArray(urbanSectors) ? urbanSectors[0] : null;
+    if (!first?._id) return;
+    setSelectedUrbanSectorId(String(first._id));
+  }, [activePage, hierarchyTab, selectedUrbanSectorId, urbanSectors]);
+
+  useEffect(() => {
+    const run = async () => {
+      const sectorId = String(selectedUrbanSectorId || '').trim();
+      if (!sectorId) {
+        setSubsectors([]);
+        setSelectedSubsectorId('');
+        setSubsectorDepartmentIds([]);
+        return;
+      }
+      try {
+        setSubsectorLoading(true);
+        const res = await dataService.saListSubsectors(sectorId);
+        const list = Array.isArray(res?.subsectors) ? res.subsectors : [];
+        setSubsectors(list);
+        if (!list.some(s => String(s?._id || '') === String(selectedSubsectorId))) {
+          setSelectedSubsectorId('');
+          setSubsectorDepartmentIds([]);
+        }
+      } catch {
+        setSubsectors([]);
+        setSelectedSubsectorId('');
+        setSubsectorDepartmentIds([]);
+      } finally {
+        setSubsectorLoading(false);
+      }
+    };
+
+    run();
+  }, [selectedUrbanSectorId, selectedSubsectorId]);
+
+  useEffect(() => {
+    const run = async () => {
+      const subsectorId = String(selectedSubsectorId || '').trim();
+      if (!subsectorId) {
+        setSubsectorDepartmentIds([]);
+        return;
+      }
+      try {
+        setJurisdictionLoading(true);
+        const res = await dataService.saGetSubsectorJurisdictions(subsectorId);
+        const ids = Array.isArray(res?.mapping?.departmentIds) ? res.mapping.departmentIds : [];
+        setSubsectorDepartmentIds(ids.map(String));
+      } catch {
+        setSubsectorDepartmentIds([]);
+      } finally {
+        setJurisdictionLoading(false);
+      }
+    };
+
+    run();
+  }, [selectedSubsectorId]);
 
   const loadPolicies = useCallback(async () => {
     try {
@@ -899,7 +968,7 @@ const SuperAdminDashboard = () => {
         throw new Error('Select operational area type and coverage before setting address');
       }
       if (!newDepLocationValidated) {
-        throw new Error('Validate the Islamabad address before creating the department');
+      throw new Error(t('validateIslamabadAddressFirst') || 'Validate the Islamabad address before saving');
       }
       const payload = {
         ...newDep,
@@ -924,7 +993,14 @@ const SuperAdminDashboard = () => {
     e.preventDefault();
     try {
       if (!newSector.name.trim()) return;
-      await dataService.saCreateUrbanSector(newSector);
+      const created = await dataService.saCreateUrbanSector(newSector);
+      const createdSectorId = created?.sector?._id ? String(created.sector._id) : '';
+      if (createdSectorId) {
+        setSelectedUrbanSectorId(createdSectorId);
+        if (autoGenerateSubsectorsOnCreate) {
+          await dataService.saAutoGenerateSubsectors(createdSectorId);
+        }
+      }
       setNewSector({ name: '' });
       loadHierarchy();
       showModal(t('success') || 'Success', 'Sector created successfully');
@@ -984,6 +1060,83 @@ const SuperAdminDashboard = () => {
     }
   };
 
+  const createSubsector = async (e) => {
+    e.preventDefault();
+    try {
+      const sectorId = String(selectedUrbanSectorId || '').trim();
+      const name = String(newSubsectorName || '').trim();
+      if (!sectorId) return showModal(t('error') || 'Error', t('selectSector') || 'Select Sector');
+      if (!name) return;
+      await dataService.saCreateSubsector({ name, sectorId });
+      setNewSubsectorName('');
+      const res = await dataService.saListSubsectors(sectorId);
+      setSubsectors(Array.isArray(res?.subsectors) ? res.subsectors : []);
+      showModal(t('success') || 'Success', t('subsectorCreatedSuccessfully') || 'Subsector created successfully');
+    } catch (error) {
+      showModal(t('error') || 'Error', error.message);
+    }
+  };
+
+  const autoGenerateSubsectors = async () => {
+    try {
+      const sectorId = String(selectedUrbanSectorId || '').trim();
+      if (!sectorId) return showModal(t('error') || 'Error', t('selectSector') || 'Select Sector');
+      const res = await dataService.saAutoGenerateSubsectors(sectorId);
+      setSubsectors(Array.isArray(res?.subsectors) ? res.subsectors : []);
+      showModal(t('success') || 'Success', t('subsectorsGenerated') || 'Subsectors generated');
+    } catch (error) {
+      showModal(t('error') || 'Error', error.message);
+    }
+  };
+
+  const updateSubsector = async (id, oldName) => {
+    const newName = prompt(t('enterNewSubsectorName') || 'Enter new subsector name:', oldName);
+    if (!newName || newName === oldName) return;
+    try {
+      await dataService.saUpdateSubsector(id, { name: newName });
+      const sectorId = String(selectedUrbanSectorId || '').trim();
+      if (sectorId) {
+        const res = await dataService.saListSubsectors(sectorId);
+        setSubsectors(Array.isArray(res?.subsectors) ? res.subsectors : []);
+      }
+      showModal(t('success') || 'Success', t('subsectorUpdatedSuccessfully') || 'Subsector updated successfully');
+    } catch (error) {
+      showModal(t('error') || 'Error', error.message);
+    }
+  };
+
+  const deleteSubsector = async (id) => {
+    if (!window.confirm(t('confirmDelete') || 'Are you sure you want to delete this?')) return;
+    try {
+      await dataService.saDeleteSubsector(id);
+      const sectorId = String(selectedUrbanSectorId || '').trim();
+      if (sectorId) {
+        const res = await dataService.saListSubsectors(sectorId);
+        setSubsectors(Array.isArray(res?.subsectors) ? res.subsectors : []);
+      } else {
+        setSubsectors([]);
+      }
+      if (String(selectedSubsectorId) === String(id)) {
+        setSelectedSubsectorId('');
+        setSubsectorDepartmentIds([]);
+      }
+      showModal(t('success') || 'Success', t('subsectorDeletedSuccessfully') || 'Subsector deleted successfully');
+    } catch (error) {
+      showModal(t('error') || 'Error', error.message);
+    }
+  };
+
+  const saveSubsectorJurisdictions = async () => {
+    try {
+      const subsectorId = String(selectedSubsectorId || '').trim();
+      if (!subsectorId) return showModal(t('error') || 'Error', t('selectSubsector') || 'Select Subsector');
+      await dataService.saSetSubsectorJurisdictions(subsectorId, subsectorDepartmentIds);
+      showModal(t('success') || 'Success', t('jurisdictionsSaved') || 'Jurisdictions saved');
+    } catch (error) {
+      showModal(t('error') || 'Error', error.message);
+    }
+  };
+
   const startEditDepartment = (dep) => {
     setEditingDep({
       ...dep,
@@ -1002,7 +1155,7 @@ const SuperAdminDashboard = () => {
         throw new Error('Select operational area type and coverage before setting address');
       }
       if (!editDepLocationValidated) {
-        throw new Error('Validate the Islamabad address before saving changes');
+        throw new Error(t('validateIslamabadAddressFirst') || 'Validate the Islamabad address before saving');
       }
       const payload = {
         name: editingDep.name,
@@ -1445,7 +1598,7 @@ const SuperAdminDashboard = () => {
                             }
                             setNewDepLocationValidated(true);
                             setNewDepLocationValidatedText(result.displayName || '');
-                            showModal(t('success') || 'Success', 'Address validated for Islamabad');
+                            showModal(t('success') || 'Success', t('addressValidatedForIslamabad') || 'Address validated for Islamabad');
                           } catch (err) {
                             setNewDepLocationValidated(false);
                             setNewDepLocationValidatedText('');
@@ -1530,7 +1683,7 @@ const SuperAdminDashboard = () => {
         {activePage === 'hierarchy' && (
           <section className="sa-section">
             <div className="section-header">
-              <h3 className="form-title">{t('hierarchy') || 'Hierarchy'} (Islamabad)</h3>
+              <h3 className="form-title">{t('hierarchy') || 'Hierarchy'} ({t('islamabad') || 'Islamabad'})</h3>
               <div className="sa-hierarchy-actions">
                 <div className="segmented">
                   <button type="button" className={`seg-item ${hierarchyTab === 'urban' ? 'active' : ''}`} onClick={() => { setHierarchyTab('urban'); setHierarchySearch(''); }}>{t('urbanSectors') || 'Urban Sectors'}</button>
@@ -1549,8 +1702,8 @@ const SuperAdminDashboard = () => {
             </div>
             
             {hierarchyTab === 'urban' && (
-              <div className="sa-grid">
-                <div className="sa-panel premium">
+              <div className="sa-grid sa-hierarchy-grid">
+                <div className="sa-panel premium sa-hierarchy-create">
                   <div className="panel-header">
                     <div className="sa-list-title"><i className="fas fa-city"></i>{t('createSector') || 'Create Urban Sector'}</div>
                   </div>
@@ -1559,14 +1712,24 @@ const SuperAdminDashboard = () => {
                       <div className="form-label">{t('sectorName') || 'Sector Name (e.g. F-7)'}</div>
                       <input className="sa-input" placeholder={t('sectorExample')} value={newSector.name} onChange={e => setNewSector({ ...newSector, name: e.target.value })} required />
                     </div>
+                    <div className="form-field">
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={!!autoGenerateSubsectorsOnCreate}
+                          onChange={(e) => setAutoGenerateSubsectorsOnCreate(e.target.checked)}
+                        />
+                        {t('autoGenerateSubsectors') || 'Auto-generate /1–/4 subsectors'}
+                      </label>
+                    </div>
                     <button className="btn btn-primary" type="submit">{t('add')}</button>
                   </form>
                 </div>
-                <div className="sa-panel premium">
+                <div className="sa-panel premium sa-hierarchy-sectors">
                   <div className="panel-header">
                     <div className="sa-list-title"><i className="fas fa-list"></i>{t('existingSectors') || 'Existing Sectors'}</div>
                     <div className="sa-count-badge">
-                      {(urbanSectors || []).filter(s => String(s?.name || '').toLowerCase().includes(String(hierarchySearch || '').toLowerCase().trim())).length}
+                      {(t('total') || 'Total')}: {(urbanSectors || []).filter(s => String(s?.name || '').toLowerCase().includes(String(hierarchySearch || '').toLowerCase().trim())).length}
                     </div>
                   </div>
                   <div className="sa-list">
@@ -1575,14 +1738,110 @@ const SuperAdminDashboard = () => {
                       .filter(s => String(s?.name || '').toLowerCase().includes(String(hierarchySearch || '').toLowerCase().trim()))
                       .map(s => (
                       <div key={s._id} className="sa-list-item">
-                        <div className="sa-item-header"><strong>{s.name}</strong></div>
+                        <div className="sa-item-header">
+                          <strong>{s.name}</strong>
+                          {String(selectedUrbanSectorId) === String(s._id) && <span className="sa-tag subtle">{t('selected') || 'Selected'}</span>}
+                        </div>
                         <div className="sa-item-actions">
+                           <button className="btn btn-outline" type="button" onClick={() => { setSelectedUrbanSectorId(s._id); setSelectedSubsectorId(''); setSubsectorDepartmentIds([]); }}>{t('manage') || 'Manage'}</button>
                            <button className="btn btn-outline" onClick={() => updateUrbanSector(s._id, s.name)}>{t('edit') || 'Edit'}</button>
                            <button className="btn btn-outline" onClick={async ()=>{ await dataService.saDeleteUrbanSector(s._id); loadHierarchy(); }}>{t('delete')}</button>
                         </div>
                       </div>
                     ))}
                   </div>
+                </div>
+                <div className="sa-panel premium sa-hierarchy-subsectors">
+                  <div className="panel-header">
+                    <div className="sa-list-title"><i className="fas fa-sitemap"></i>{t('subsectors') || 'Subsectors'}</div>
+                    <div className="panel-actions">
+                      <div className="sa-count-badge">{Array.isArray(subsectors) ? subsectors.length : 0}</div>
+                    </div>
+                  </div>
+
+                  {!selectedUrbanSectorId ? (
+                    <div className="list-empty">{t('selectSectorToManageSubsectors') || 'Select a sector to manage subsectors'}</div>
+                  ) : (
+                    <>
+                      <div className="sa-form" style={{ paddingTop: 0 }}>
+                        <div className="form-field">
+                          <div className="form-label">{t('selectedSector') || 'Selected Sector'}</div>
+                          <div className="sa-inline-status ok">
+                            {(urbanSectors || []).find(s => String(s?._id || '') === String(selectedUrbanSectorId))?.name || '—'}
+                          </div>
+                        </div>
+
+                        <div className="form-field">
+                          <button type="button" className="btn btn-outline" onClick={autoGenerateSubsectors} disabled={subsectorLoading}>
+                            {t('autoGenerateSubsectors') || 'Auto-generate /1–/4 subsectors'}
+                          </button>
+                        </div>
+
+                        <form className="sa-form" onSubmit={createSubsector} style={{ padding: 0 }}>
+                          <div className="form-field">
+                            <div className="form-label">{t('subsectorName') || 'Subsector Name (e.g. F-7/2)'}</div>
+                            <input className="sa-input" value={newSubsectorName} onChange={(e) => setNewSubsectorName(e.target.value)} placeholder="F-7/1" />
+                          </div>
+                          <button className="btn btn-primary" type="submit" disabled={!String(newSubsectorName || '').trim()}>{t('add')}</button>
+                        </form>
+
+                        <div className="form-field">
+                          <div className="form-label">{t('selectSubsector') || 'Select Subsector'}</div>
+                          <select className="sa-select" value={selectedSubsectorId} onChange={(e) => setSelectedSubsectorId(e.target.value)} disabled={subsectorLoading}>
+                            <option value="">{t('selectSubsector') || 'Select Subsector'}</option>
+                            {(subsectors || []).map(ss => (
+                              <option key={ss._id} value={ss._id}>{ss.name}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {selectedSubsectorId && (
+                          <>
+                            <div className="sa-form-section-title">{t('departmentJurisdictions') || 'Department Jurisdictions'}</div>
+                            <div className="form-field">
+                              <div className="form-label">{t('departments') || 'Departments'}</div>
+                              <select
+                                multiple
+                                className="sa-select sa-multi-select"
+                                value={subsectorDepartmentIds}
+                                onChange={(e) => {
+                                  const selected = Array.from(e.target.selectedOptions, option => option.value);
+                                  setSubsectorDepartmentIds(selected);
+                                }}
+                                disabled={jurisdictionLoading}
+                              >
+                                {(deps || []).filter(d => d && d.isActive !== false).map(d => (
+                                  <option key={d._id} value={d._id}>{d.name}</option>
+                                ))}
+                              </select>
+                              <div className="form-helper">{t('multiSelectHelper') || 'Hold Ctrl/Cmd to select multiple'}</div>
+                            </div>
+                            <button type="button" className="btn btn-primary" onClick={saveSubsectorJurisdictions} disabled={jurisdictionLoading}>
+                              {jurisdictionLoading ? (t('saving') || 'Saving...') : (t('save') || 'Save')}
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="sa-list">
+                        {subsectorLoading && <div className="list-empty">{t('loading') || 'Loading...'}</div>}
+                        {!subsectorLoading && (subsectors || []).length === 0 && <div className="list-empty">{t('noData') || 'No data'}</div>}
+                        {(subsectors || []).map(ss => (
+                          <div key={ss._id} className="sa-list-item">
+                            <div className="sa-item-header">
+                              <strong>{ss.name}</strong>
+                              {String(selectedSubsectorId) === String(ss._id) && <span className="sa-tag subtle">{t('selected') || 'Selected'}</span>}
+                            </div>
+                            <div className="sa-item-actions">
+                              <button className="btn btn-outline" type="button" onClick={() => setSelectedSubsectorId(ss._id)}>{t('manage') || 'Manage'}</button>
+                              <button className="btn btn-outline" type="button" onClick={() => updateSubsector(ss._id, ss.name)}>{t('edit') || 'Edit'}</button>
+                              <button className="btn btn-outline" type="button" onClick={() => deleteSubsector(ss._id)}>{t('delete') || 'Delete'}</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -3097,7 +3356,7 @@ const SuperAdminDashboard = () => {
                             }
                             setEditDepLocationValidated(true);
                             setEditDepLocationValidatedText(result.displayName || '');
-                            showModal(t('success') || 'Success', 'Address validated for Islamabad');
+                            showModal(t('success') || 'Success', t('addressValidatedForIslamabad') || 'Address validated for Islamabad');
                           } catch (err) {
                             setEditDepLocationValidated(false);
                             setEditDepLocationValidatedText('');

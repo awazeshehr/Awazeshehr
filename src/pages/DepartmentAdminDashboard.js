@@ -50,6 +50,8 @@ const DepartmentAdminDashboard = () => {
     toDate: '',
     area: '',
     region: '',
+    sector: 'all',
+    subsector: 'all',
     overdueOnly: false
   });
   const [selectedComplaint, setSelectedComplaint] = useState(null);
@@ -1320,6 +1322,26 @@ const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewCo
     return Array.from(set).sort((a, b) => String(a).localeCompare(String(b)));
   }, [complaints]);
 
+  const availableSectors = React.useMemo(() => {
+    const set = new Set();
+    (complaints || []).forEach((c) => {
+      const v = String(c?.sector || '').trim();
+      if (v) set.add(v);
+    });
+    return Array.from(set).sort((a, b) => String(a).localeCompare(String(b)));
+  }, [complaints]);
+
+  const availableSubsectors = React.useMemo(() => {
+    const set = new Set();
+    const sectorFilter = String(filters?.sector || 'all');
+    (complaints || []).forEach((c) => {
+      if (sectorFilter !== 'all' && String(c?.sector || '') !== sectorFilter) return;
+      const v = String(c?.subsector || '').trim();
+      if (v) set.add(v);
+    });
+    return Array.from(set).sort((a, b) => String(a).localeCompare(String(b)));
+  }, [complaints, filters?.sector]);
+
   const sorted = React.useMemo(() => {
     if (!Array.isArray(complaints)) return [];
     const arr = [...complaints];
@@ -1432,6 +1454,39 @@ const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewCo
             onChange={(e) => handleFilterChange('region', e.target.value)}
           />
         </div>
+
+        <div className="filter-group">
+          <label className="filter-label">{t('sector') || 'Sector'}</label>
+          <select
+            className="filter-select"
+            value={filters.sector}
+            onChange={(e) => {
+              const next = e.target.value;
+              onFilterChange({ ...filters, sector: next, subsector: 'all' });
+              setPage(1);
+            }}
+          >
+            <option value="all">{tr('all', 'All')}</option>
+            {availableSectors.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="filter-group">
+          <label className="filter-label">{t('subsector') || 'Subsector'}</label>
+          <select
+            className="filter-select"
+            value={filters.subsector}
+            onChange={(e) => handleFilterChange('subsector', e.target.value)}
+            disabled={availableSubsectors.length === 0}
+          >
+            <option value="all">{tr('all', 'All')}</option>
+            {availableSubsectors.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </div>
         
         <div className="filter-group">
           <label className="filter-label">{t('priority')}</label>
@@ -1459,7 +1514,7 @@ const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewCo
           <button className="action-btn" title={tr('applyFilters', 'Apply Filters')} onClick={() => setFiltersVersion(v => v + 1)}>
             <i className="fas fa-filter"></i>
           </button>
-          <button className="action-btn" title={tr('resetFilters', 'Reset Filters')} onClick={() => { onFilterChange({ search:'', category:'all', status:'all', priority:'all', officer:'all', fromDate:'', toDate:'', area:'', region:'', overdueOnly:false }); setFiltersVersion(v => v + 1); }}>
+          <button className="action-btn" title={tr('resetFilters', 'Reset Filters')} onClick={() => { onFilterChange({ search:'', category:'all', status:'all', priority:'all', officer:'all', fromDate:'', toDate:'', area:'', region:'', sector:'all', subsector:'all', overdueOnly:false }); setFiltersVersion(v => v + 1); }}>
             <i className="fas fa-undo"></i>
           </button>
         </div>
@@ -1472,6 +1527,7 @@ const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewCo
             <tr>
               <th onClick={() => handleSort('complaintId')} aria-sort={sortBy.key==='complaintId'?sortBy.dir:'none'}>{t('complaintId')}</th>
               <th onClick={() => handleSort('category')} aria-sort={sortBy.key==='category'?sortBy.dir:'none'}>{t('category')}</th>
+              <th onClick={() => handleSort('sector')} aria-sort={sortBy.key==='sector'?sortBy.dir:'none'}>{t('sector') || 'Sector'}</th>
               <th onClick={() => handleSort('citizenName')} aria-sort={sortBy.key==='citizenName'?sortBy.dir:'none'}>{t('citizen')}</th>
               <th onClick={() => handleSort('status')} aria-sort={sortBy.key==='status'?sortBy.dir:'none'}>{t('status')}</th>
               <th onClick={() => handleSort('priority')} aria-sort={sortBy.key==='priority'?sortBy.dir:'none'}>{t('priority')}</th>
@@ -1486,6 +1542,7 @@ const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewCo
               <tr key={complaint._id} style={{ backgroundColor: isOverdue(complaint) ? '#fff0f0' : undefined }}>
                 <td>{complaint.complaintId}</td>
                 <td>{complaint.category}</td>
+                <td>{complaint.subsector ? `${complaint.sector || ''} • ${complaint.subsector}` : (complaint.sector || '-')}</td>
                 <td>{complaint.citizenName}</td>
                 <td>
                   <span className={`status-badge status-${complaint.status}`}>

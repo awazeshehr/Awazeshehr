@@ -19,6 +19,8 @@ router.use(auth, authorize('super-admin'));
 const mongoose = require('mongoose');
 const RoutingPolicy = require('../models/RoutingPolicy');
 const UrbanSector = require('../models/UrbanSector');
+const Subsector = require('../models/Subsector');
+const SubsectorJurisdictionMapping = require('../models/SubsectorJurisdictionMapping');
 const RuralJurisdiction = require('../models/RuralJurisdiction');
 const SystemPolicy = require('../models/SystemPolicy');
 const AuditLog = require('../models/AuditLog');
@@ -91,11 +93,162 @@ router.put('/urban-sectors/:id', async (req, res) => {
 
 router.delete('/urban-sectors/:id', async (req, res) => {
   try {
-    await UrbanSector.findByIdAndDelete(req.params.id);
-    audit(req, 'delete', 'urbanSector', req.params.id, {});
+    const sectorId = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(sectorId)) {
+      return res.status(400).json({ success: false, message: 'Invalid sector id' });
+    }
+    const subs = await Subsector.find({ sectorId }).select('_id');
+    const subsectorIds = (subs || []).map(s => s._id).filter(Boolean);
+    if (subsectorIds.length > 0) {
+      await SubsectorJurisdictionMapping.deleteMany({ subsectorId: { $in: subsectorIds } });
+      await Subsector.deleteMany({ sectorId });
+    }
+    await UrbanSector.findByIdAndDelete(sectorId);
+    audit(req, 'delete', 'urbanSector', sectorId, { deletedSubsectors: subsectorIds.length });
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ success: false, message: 'Failed to delete sector' });
+  }
+});
+
+router.get('/urban-sectors/:sectorId/subsectors', async (req, res) => {
+  try {
+    const sectorId = req.params.sectorId;
+    if (!mongoose.Types.ObjectId.isValid(sectorId)) {
+      return res.status(400).json({ success: false, message: 'Invalid sectorId' });
+    }
+    const list = await Subsector.find({ sectorId }).sort({ name: 1 });
+    res.json({ success: true, subsectors: list });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to list subsectors' });
+  }
+});
+
+router.post('/subsectors', async (req, res) => {
+  try {
+    const { name, sectorId, status } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ success: false, message: 'Subsector name is required' });
+    if (!sectorId || !mongoose.Types.ObjectId.isValid(sectorId)) return res.status(400).json({ success: false, message: 'Valid sectorId is required' });
+
+    const sector = await UrbanSector.findById(sectorId).select('_id name city');
+    if (!sector) return res.status(404).json({ success: false, message: 'Sector not found' });
+
+    const subsector = await Subsector.create({
+      name: String(name).trim(),
+      sectorId,
+      city: sector.city || 'Islamabad',
+      status: status === 'inactive' ? 'inactive' : 'active'
+    });
+    audit(req, 'create', 'subsector', subsector._id, { name: subsector.name, sectorId });
+    res.status(201).json({ success: true, subsector });
+  } catch (e) {
+    if (e.code === 11000) return res.status(400).json({ success: false, message: 'Subsector already exists in this sector' });
+    res.status(500).json({ success: false, message: 'Failed to create subsector' });
+  }
+});
+
+router.post('/urban-sectors/:sectorId/subsectors/auto-generate', async (req, res) => {
+  try {
+    const sectorId = req.params.sectorId;
+    if (!mongoose.Types.ObjectId.isValid(sectorId)) {
+      return res.status(400).json({ success: false, message: 'Invalid sectorId' });
+    }
+
+    const sector = await UrbanSector.findById(sectorId).select('_id name city');
+    if (!sector) return res.status(404).json({ success: false, message: 'Sector not found' });
+
+    const base = String(sector.name || '').trim();
+    if (!base) return res.status(400).json({ success: false, message: 'Sector name is required to generate subsectors' });
+
+    const toCreate = [1, 2, 3, 4].map(n => ({
+      name: `${base}/${n}`,
+      sectorId: sector._id,
+      city: sector.city || 'Islamabad',
+      status: 'active'
+    }));
+
+    let insertedCount = 0;
+    try {
+      const inserted = await Subsector.insertMany(toCreate, { ordered: false });
+      insertedCount = Array.isArray(inserted) ? inserted.length : 0;
+    } catch (e) {
+      const writeErrors = Array.isArray(e?.writeErrors) ? e.writeErrors : [];
+      insertedCount = Math.max(0, toCreate.length - writeErrors.length);
+    }
+
+    audit(req, 'create', 'subsector:auto-generate', sectorId, { sectorName: base, created: insertedCount });
+    const list = await Subsector.find({ sectorId }).sort({ name: 1 });
+    res.json({ success: true, created: insertedCount, subsectors: list });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to auto-generate subsectors' });
+  }
+});
+
+router.put('/subsectors/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ success: false, message: 'Invalid id' });
+    const { name, status } = req.body || {};
+    const updates = {};
+    if (typeof name === 'string' && name.trim()) updates.name = name.trim();
+    if (status === 'active' || status === 'inactive') updates.status = status;
+    if (Object.keys(updates).length === 0) return res.status(400).json({ success: false, message: 'No updates provided' });
+
+    const subsector = await Subsector.findByIdAndUpdate(id, updates, { new: true });
+    if (!subsector) return res.status(404).json({ success: false, message: 'Subsector not found' });
+    audit(req, 'update', 'subsector', id, updates);
+    res.json({ success: true, subsector });
+  } catch (e) {
+    if (e.code === 11000) return res.status(400).json({ success: false, message: 'Subsector already exists in this sector' });
+    res.status(500).json({ success: false, message: 'Failed to update subsector' });
+  }
+});
+
+router.delete('/subsectors/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ success: false, message: 'Invalid id' });
+    await SubsectorJurisdictionMapping.findOneAndDelete({ subsectorId: id });
+    await Subsector.findByIdAndDelete(id);
+    audit(req, 'delete', 'subsector', id, {});
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to delete subsector' });
+  }
+});
+
+router.get('/subsectors/:id/jurisdictions', async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ success: false, message: 'Invalid id' });
+    const mapping = await SubsectorJurisdictionMapping.findOne({ subsectorId: id }).select('subsectorId departmentIds');
+    res.json({ success: true, mapping: mapping || { subsectorId: id, departmentIds: [] } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to fetch jurisdictions' });
+  }
+});
+
+router.put('/subsectors/:id/jurisdictions', async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ success: false, message: 'Invalid id' });
+    const raw = Array.isArray(req.body?.departmentIds) ? req.body.departmentIds : [];
+    const departmentIds = raw
+      .map(x => String(x || '').trim())
+      .filter(Boolean)
+      .filter(x => mongoose.Types.ObjectId.isValid(x))
+      .map(x => new mongoose.Types.ObjectId(x));
+
+    const mapping = await SubsectorJurisdictionMapping.findOneAndUpdate(
+      { subsectorId: id },
+      { subsectorId: id, departmentIds, updatedAt: new Date() },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    ).select('subsectorId departmentIds');
+
+    audit(req, 'update', 'subsectorJurisdictionMapping', id, { departmentIds: departmentIds.map(String) });
+    res.json({ success: true, mapping });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to update jurisdictions' });
   }
 });
 

@@ -4,6 +4,7 @@ const Notification = require('../models/Notification');
 const Department = require('../models/Department');
 const FieldOfficer = require('../models/FieldOfficer');
 const UrbanSector = require('../models/UrbanSector');
+const Subsector = require('../models/Subsector');
 const RuralJurisdiction = require('../models/RuralJurisdiction');
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
@@ -59,6 +60,17 @@ router.get('/data/sectors', auth, async (req, res) => {
     res.json({ success: true, sectors });
   } catch (e) {
     res.status(500).json({ success: false, message: 'Failed to fetch sectors' });
+  }
+});
+
+router.get('/data/sectors/:sectorId/subsectors', auth, async (req, res) => {
+  try {
+    const sectorId = req.params.sectorId;
+    if (!sectorId) return res.status(400).json({ success: false, message: 'sectorId is required' });
+    const list = await Subsector.find({ sectorId }).sort({ name: 1 });
+    res.json({ success: true, subsectors: list });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to fetch subsectors' });
   }
 });
 
@@ -209,6 +221,8 @@ router.post('/submit', auth, authorize('citizen'), upload.array('media', 5), asy
                 city: 'islamabad',
                 areaType: location.areaType || 'Urban',
                 sector: location.sector || '',
+                subsector: location.subsector || '',
+                subsectorId: location.subsectorId || undefined,
                 ruralJurisdiction: location.ruralJurisdiction || ''
               },
               media: mediaFiles,
@@ -465,6 +479,9 @@ router.get('/field-officer/assigned', auth, authorize('field-officer'), async (r
         description: complaint.description,
         category: complaint.category,
         location: complaint.location.address,
+        areaType: complaint.location?.areaType || '',
+        sector: complaint.location?.sector || '',
+        subsector: complaint.location?.subsector || '',
         status: complaint.status,
         priority: complaint.priority,
         citizenName: complaint.userId?.fullName || 'N/A',
@@ -943,7 +960,12 @@ router.post('/submit-simple', auth, async (req, res) => {
         lat: parseFloat(location.lat),
         lng: parseFloat(location.lng),
         address: location.address || 'Address not specified',
-        city: location.city || 'karachi'
+        city: location.city || 'karachi',
+        areaType: location.areaType || undefined,
+        sector: location.sector || '',
+        subsector: location.subsector || '',
+        subsectorId: location.subsectorId || undefined,
+        ruralJurisdiction: location.ruralJurisdiction || ''
       },
       status: 'pending',
       priority: classification.priority,

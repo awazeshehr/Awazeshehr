@@ -148,11 +148,13 @@ const CitizenDashboard = () => {
   const [draftBanner, setDraftBanner] = useState('');
   const [areaType, setAreaType] = useState('Urban');
   const [sector, setSector] = useState('');
+  const [subsectorId, setSubsectorId] = useState('');
   const [ruralJurisdiction, setRuralJurisdiction] = useState('');
   
   // New State for Dynamic Hierarchy & Department Selection
   const [departments, setDepartments] = useState([]);
   const [availableSectors, setAvailableSectors] = useState([]);
+  const [availableSubsectors, setAvailableSubsectors] = useState([]);
   const [availableJurisdictions, setAvailableJurisdictions] = useState([]);
   const [selectedDepartmentId, setSelectedDepartmentId] = useState('');
   const [selectedService, setSelectedService] = useState('');
@@ -195,6 +197,43 @@ const CitizenDashboard = () => {
 
     fetchHierarchyData();
   }, []);
+
+  useEffect(() => {
+    const loadSubsectors = async () => {
+      if (areaType !== 'Urban') {
+        setAvailableSubsectors([]);
+        setSubsectorId('');
+        return;
+      }
+      const sectorName = String(sector || '').trim();
+      if (!sectorName) {
+        setAvailableSubsectors([]);
+        setSubsectorId('');
+        return;
+      }
+      const sectorDoc = (availableSectors || []).find(s => String(s?.name || '').trim() === sectorName);
+      if (!sectorDoc?._id) {
+        setAvailableSubsectors([]);
+        setSubsectorId('');
+        return;
+      }
+      try {
+        const token = localStorage.getItem('token');
+        const headers = { 'Authorization': `Bearer ${token}` };
+        const res = await fetch(`${dataService.apiBaseUrl}/complaints/data/sectors/${sectorDoc._id}/subsectors`, { headers });
+        const data = await res.json().catch(() => null);
+        if (data?.success) {
+          setAvailableSubsectors(Array.isArray(data.subsectors) ? data.subsectors : []);
+        } else {
+          setAvailableSubsectors([]);
+        }
+      } catch {
+        setAvailableSubsectors([]);
+      }
+    };
+
+    loadSubsectors();
+  }, [areaType, sector, availableSectors]);
 
   // Update available services when department changes
   useEffect(() => {
@@ -754,6 +793,7 @@ const CitizenDashboard = () => {
       if (typeof parsed?.selectedService === 'string' && !selectedService) setSelectedService(parsed.selectedService);
       if (typeof parsed?.areaType === 'string') setAreaType(parsed.areaType);
       if (typeof parsed?.sector === 'string' && !sector) setSector(parsed.sector);
+      if (typeof parsed?.subsectorId === 'string' && !subsectorId) setSubsectorId(parsed.subsectorId);
       if (typeof parsed?.ruralJurisdiction === 'string' && !ruralJurisdiction) setRuralJurisdiction(parsed.ruralJurisdiction);
       if (typeof parsed?.locationQuery === 'string' && !locationQuery) setLocationQuery(parsed.locationQuery);
 
@@ -775,6 +815,7 @@ const CitizenDashboard = () => {
         selectedService,
         areaType,
         sector,
+        subsectorId,
         ruralJurisdiction,
         locationQuery
       };
@@ -788,6 +829,7 @@ const CitizenDashboard = () => {
     locationQuery,
     ruralJurisdiction,
     sector,
+    subsectorId,
     selectedDepartmentId,
     selectedService
   ]);
@@ -825,6 +867,12 @@ const CitizenDashboard = () => {
         setIsLoading(false);
         return;
       }
+
+      if (areaType === 'Urban' && !subsectorId) {
+        showNotificationMessage('Please select the Subsector', 'error');
+        setIsLoading(false);
+        return;
+      }
       
       if (areaType === 'Rural' && !ruralJurisdiction) {
         showNotificationMessage('Please select the Rural Jurisdiction', 'error');
@@ -835,6 +883,7 @@ const CitizenDashboard = () => {
       const lat = markerRef.current.getLatLng().lat;
       const lng = markerRef.current.getLatLng().lng;
       const address = await getAddressFromCoordinates(lat, lng);
+      const selectedSubsector = (availableSubsectors || []).find(s => String(s?._id || '') === String(subsectorId || ''));
 
       const submissionData = new FormData();
       // submissionData.append('category', form.get('category')); // Removed category
@@ -848,6 +897,8 @@ const CitizenDashboard = () => {
         address,
         areaType,
         sector,
+        subsector: selectedSubsector?.name ? String(selectedSubsector.name) : '',
+        subsectorId: subsectorId || undefined,
         ruralJurisdiction
       }));
 
@@ -892,6 +943,8 @@ const CitizenDashboard = () => {
         setDescription(''); // Also reset description state
         setAreaType('Urban');
         setSector('');
+        setSubsectorId('');
+        setAvailableSubsectors([]);
         setRuralJurisdiction('');
         
       } else {
@@ -1350,14 +1403,23 @@ const CitizenDashboard = () => {
       (Boolean(selectedDepartmentId) && String(selectedService || '').trim().length > 0);
 
     const step3Done = (submissionFiles || []).length > 0;
-    const step4Done = String(addressPreview || '').trim().length > 0;
+    const step4Done = areaType === 'Urban'
+      ? (String(addressPreview || '').trim().length > 0 && !!sector && !!subsectorId)
+      : (String(addressPreview || '').trim().length > 0 && !!ruralJurisdiction);
 
     const selectedDepartmentName = selectedDepartmentId
       ? (departments.find(d => String(d._id) === String(selectedDepartmentId))?.name || '')
       : '';
 
     const areaMeta = areaType === 'Urban'
-      ? (sector ? `Urban • ${sector}` : 'Urban')
+      ? (sector
+          ? (subsectorId
+              ? (() => {
+                  const sub = (availableSubsectors || []).find(s => String(s?._id || '') === String(subsectorId));
+                  return sub?.name ? `Urban • ${sector} • ${sub.name}` : `Urban • ${sector}`;
+                })()
+              : `Urban • ${sector}`)
+          : 'Urban')
       : (ruralJurisdiction ? `Rural • ${ruralJurisdiction}` : 'Rural');
 
     const addrShort = String(addressPreview || '').trim()
@@ -1408,6 +1470,8 @@ const CitizenDashboard = () => {
     description,
     ruralJurisdiction,
     sector,
+    subsectorId,
+    availableSubsectors,
     selectedDepartmentId,
     selectedService,
     submissionFiles,
@@ -1447,6 +1511,8 @@ const CitizenDashboard = () => {
     setSubmissionFiles([]);
     setLocationQuery('');
     setSector('');
+    setSubsectorId('');
+    setAvailableSubsectors([]);
     setRuralJurisdiction('');
     setDepartmentManuallySelected(false);
     setRoutingRecommendation(null);
@@ -2145,19 +2211,38 @@ const CitizenDashboard = () => {
                     </div>
 
                     {areaType === 'Urban' && (
-                      <div className="form-group">
-                        <label className="form-label">{t('sector') || 'Sector'}</label>
-                        <select 
-                          className="premium-select"
-                          value={sector}
-                          onChange={(e) => setSector(e.target.value)}
-                        >
-                          <option value="">{t('selectSector') || 'Select Sector'}</option>
-                          {availableSectors.map(sec => (
-                            <option key={sec._id} value={sec.name}>{sec.name}</option>
-                          ))}
-                        </select>
-                      </div>
+                      <>
+                        <div className="form-group">
+                          <label className="form-label">{t('sector') || 'Sector'}</label>
+                          <select
+                            className="premium-select"
+                            value={sector}
+                            onChange={(e) => {
+                              setSector(e.target.value);
+                              setSubsectorId('');
+                            }}
+                          >
+                            <option value="">{t('selectSector') || 'Select Sector'}</option>
+                            {availableSectors.map(sec => (
+                              <option key={sec._id} value={sec.name}>{sec.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">{t('subsector') || 'Subsector'}</label>
+                          <select
+                            className="premium-select"
+                            value={subsectorId}
+                            onChange={(e) => setSubsectorId(e.target.value)}
+                            disabled={!sector}
+                          >
+                            <option value="">{t('selectSubsector') || 'Select Subsector'}</option>
+                            {availableSubsectors.map(sub => (
+                              <option key={sub._id} value={sub._id}>{sub.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
                     )}
 
                     {areaType === 'Rural' && (

@@ -720,6 +720,45 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 22px;
+  align-items: start;
+}
+
+.sa-hierarchy-grid {
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  grid-template-areas:
+    "create sectors"
+    "subsectors sectors";
+  column-gap: 22px;
+  row-gap: 12px;
+}
+
+.sa-hierarchy-create {
+  grid-area: create;
+}
+
+.sa-hierarchy-sectors {
+  grid-area: sectors;
+}
+
+.sa-hierarchy-subsectors {
+  grid-area: subsectors;
+}
+
+.sa-hierarchy-sectors .sa-list {
+  height: clamp(520px, 58vh, 680px);
+  overflow: auto;
+  padding-right: 6px;
+  gap: 12px;
+}
+
+.sa-hierarchy-sectors .sa-list-item {
+  padding: 16px;
+}
+
+.sa-hierarchy-subsectors .sa-list {
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 6px;
 }
 
 .sa-grid > * {
@@ -728,6 +767,23 @@ body {
 
 .sa-grid > :only-child {
   grid-column: 1 / -1;
+}
+
+@media (max-width: 980px) {
+  .sa-hierarchy-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "create"
+      "sectors"
+      "subsectors";
+  }
+
+  .sa-hierarchy-sectors .sa-list,
+  .sa-hierarchy-subsectors .sa-list {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
 }
 
 .sa-panel {
@@ -900,6 +956,12 @@ body {
   border: 1px solid rgba(99, 102, 241, 0.18);
 }
 
+.sa-hierarchy-sectors .sa-count-badge {
+  transform: translateY(-2px);
+  padding: 0 14px;
+  font-size: 0.9rem;
+}
+
 .sa-dep-title {
   display: flex;
   flex-direction: column;
@@ -999,6 +1061,9 @@ body {
   font-weight: 700;
   color: var(--primary);
   letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .sa-input, .sa-select {
@@ -1166,13 +1231,19 @@ body {
 }
 
 /* Premium List Items */
+.sa-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
 .sa-list-item {
   background: white;
   border: 1px solid rgba(226, 232, 240, 0.8);
   border-radius: 16px;
   padding: 20px;
   transition: all 0.3s ease;
-  margin-bottom: 15px;
+  margin-bottom: 0;
 }
 
 .sa-list-item:hover {
