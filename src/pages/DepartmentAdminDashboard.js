@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import dataService from '../services/dataService';
 import { useLanguage } from '../contexts/LanguageContext';
-// DirectChatModal removed for FO–Admin chat disable
+import DirectChatModal from '../components/DirectChatModal';
 import './DepartmentAdminDashboard.css';
 import ExcelJS from 'exceljs';
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line
+  PieChart, Pie, Cell
 } from 'recharts';
 
 
@@ -59,14 +59,273 @@ const DepartmentAdminDashboard = () => {
   const [showCompletionPopup, setShowCompletionPopup] = useState(false);
   const [filtersVersion, setFiltersVersion] = useState(0);
   const [completedComplaint, setCompletedComplaint] = useState(null);
-  const [chatRecipient, setChatRecipient] = useState(null);
   const [showNotifications, setShowNotifications] = useState(false);
   const [lastSeenMessageAt, setLastSeenMessageAt] = useState(0);
   const [hasNewMessage, setHasNewMessage] = useState(false);
-  const [toast, setToast] = useState(null);
-  // const [showMapModal, setShowMapModal] = useState(false); // Removed unused state
-  const socketRef = useRef(null);
+  const [showNotification, setShowNotification] = useState(false);
+  const [notificationType, setNotificationType] = useState('success');
+  const [notificationMessage, setNotificationMessage] = useState('');
+  const [directChatRecipient, setDirectChatRecipient] = useState(null);
+
+  // Tour States
+  const [showTourLangModal, setShowTourLangModal] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourIndex, setTourIndex] = useState(0);
+  const [tourRect, setTourRect] = useState(null);
+  const [tourTooltipPos, setTourTooltipPos] = useState({ top: 0, left: 0, placement: 'bottom' });
+
+  // Refs for Tour
+  const sidebarMenuRef = useRef(null);
+  const dashboardStatsRef = useRef(null);
+  const recentComplaintsRef = useRef(null);
+  const activeOfficersRef = useRef(null);
+  const headerActionsRef = useRef(null);
+
+  // New Page Specific Refs
+  const filterBarRef = useRef(null);
+  const complaintsTableRef = useRef(null);
+  const createOfficerBtnRef = useRef(null);
+  const officersTableRef = useRef(null);
+  const mapContainerRef = useRef(null);
+  const verificationTableRef = useRef(null);
+  const commsListRef = useRef(null);
+  const chartsContainerRef = useRef(null);
+
   const notificationRef = useRef(null);
+
+  const tourSteps = useMemo(() => {
+    const isUrdu = language === 'urdu';
+    
+    // Dashboard Steps
+    if (activePage === 'dashboard') {
+      return [
+        {
+          key: 'sidebar',
+          title: isUrdu ? 'نیویگیشن مینو' : 'Navigation Menu',
+          body: isUrdu 
+            ? 'یہاں سے آپ ڈیش بورڈ کے تمام اہم سیکشنز تک رسائی حاصل کر سکتے ہیں جیسے شکایات کا انتظام اور افسران کی لسٹ۔' 
+            : 'Access all key sections of the dashboard from here, including complaint management and officer lists.',
+          getEl: () => sidebarMenuRef.current
+        },
+        {
+          key: 'stats',
+          title: isUrdu ? 'ڈیش بورڈ کے اعدادوشمار' : 'Dashboard Statistics',
+          body: isUrdu 
+            ? 'یہ کارڈز آپ کو آپ کے ڈیپارٹمنٹ کی شکایات کا فوری جائزہ فراہم کرتے ہیں۔' 
+            : 'These cards give you a quick overview of your department\'s complaint statistics.',
+          getEl: () => dashboardStatsRef.current
+        },
+        {
+          key: 'recent',
+          title: isUrdu ? 'حالیہ شکایات' : 'Recent Complaints',
+          body: isUrdu 
+            ? 'حالیہ موصول ہونے والی شکایات کو یہاں دیکھا جا سکتا ہے۔' 
+            : 'View the most recently received complaints here.',
+          getEl: () => recentComplaintsRef.current
+        },
+        {
+          key: 'officers',
+          title: isUrdu ? 'فعال افسران' : 'Active Officers',
+          body: isUrdu 
+            ? 'اپنے ڈیپارٹمنٹ کے فعال فیلڈ افسران اور ان کی کارکردگی پر نظر رکھیں۔' 
+            : 'Keep track of active field officers and their current workload.',
+          getEl: () => activeOfficersRef.current
+        }
+      ];
+    }
+
+    // Complaints Page Steps
+    if (activePage === 'complaints') {
+      return [
+        {
+          key: 'filters',
+          title: isUrdu ? 'شکایات کے فلٹرز' : 'Complaint Filters',
+          body: isUrdu 
+            ? 'یہاں سے آپ شکایات کو ان کے سٹیٹس، کیٹیگری یا تاریخ کے لحاظ سے فلٹر کر سکتے ہیں۔' 
+            : 'Filter complaints by status, category, or date range using these controls.',
+          getEl: () => filterBarRef.current
+        },
+        {
+          key: 'table',
+          title: isUrdu ? 'شکایات کی فہرست' : 'Complaints List',
+          body: isUrdu 
+            ? 'تمام شکایات کی تفصیلات یہاں موجود ہیں۔ آپ کسی بھی شکایت پر کلک کر کے اس کی تفصیل دیکھ سکتے ہیں یا اسے افسر کو اسائن کر سکتے ہیں۔' 
+            : 'All complaints are listed here. Click on any row to view details or assign an officer.',
+          getEl: () => complaintsTableRef.current
+        }
+      ];
+    }
+
+    // Officers Page Steps
+    if (activePage === 'officers') {
+      return [
+        {
+          key: 'create',
+          title: isUrdu ? 'نیا افسر شامل کریں' : 'Add New Officer',
+          body: isUrdu 
+            ? 'یہاں سے آپ اپنے ڈیپارٹمنٹ کے لیے نئے فیلڈ افسران رجسٹر کر سکتے ہیں۔' 
+            : 'Register new field officers for your department from here.',
+          getEl: () => createOfficerBtnRef.current
+        },
+        {
+          key: 'officers_list',
+          title: isUrdu ? 'افسران کی فہرست' : 'Officers List',
+          body: isUrdu 
+            ? 'اپنے تمام افسران کی لسٹ اور ان کی موجودہ اسائنمنٹس یہاں چیک کریں۔' 
+            : 'Check the list of all your officers and their current assignments.',
+          getEl: () => officersTableRef.current
+        }
+      ];
+    }
+
+    // Map Page Steps
+    if (activePage === 'map') {
+      return [
+        {
+          key: 'live_map',
+          title: isUrdu ? 'لائیو نقشہ' : 'Live Map',
+          body: isUrdu 
+            ? 'اس نقشے پر آپ شکایات کی لوکیشن اور فیلڈ افسران کی لائیو لوکیشن دیکھ سکتے ہیں۔' 
+            : 'Track complaint locations and field officers in real-time on this map.',
+          getEl: () => mapContainerRef.current
+        }
+      ];
+    }
+
+    // Verification Page Steps
+    if (activePage === 'verification') {
+      return [
+        {
+          key: 'verify_list',
+          title: isUrdu ? 'تصدیق اور بندش' : 'Verification & Closure',
+          body: isUrdu 
+            ? 'افسران کی جانب سے حل شدہ شکایات کی تصدیق یہاں کریں تاکہ انہیں فائنل کلوز کیا جا سکے۔' 
+            : 'Verify resolved complaints from officers here to officially close them.',
+          getEl: () => verificationTableRef.current
+        }
+      ];
+    }
+
+    // Communication Page Steps
+    if (activePage === 'communication') {
+      return [
+        {
+          key: 'comms',
+          title: isUrdu ? 'مواصلات' : 'Communication',
+          body: isUrdu 
+            ? 'شہریوں اور فیلڈ افسران کے پیغامات کا جواب یہاں سے دیں۔' 
+            : 'Respond to messages from citizens and field officers here.',
+          getEl: () => commsListRef.current
+        }
+      ];
+    }
+
+    // Reports Page Steps
+    if (activePage === 'reports') {
+      return [
+        {
+          key: 'analytics',
+          title: isUrdu ? 'رپورٹس اور اینالیٹکس' : 'Reports & Analytics',
+          body: isUrdu 
+            ? 'ڈیپارٹمنٹ کی مجموعی کارکردگی کا جائزہ لینے کے لیے گراف اور چارٹس دیکھیں۔' 
+            : 'View detailed graphs and charts to analyze department performance.',
+          getEl: () => chartsContainerRef.current
+        }
+      ];
+    }
+
+    return [];
+  }, [activePage, language]);
+
+  const computeTourLayout = useCallback(() => {
+    if (!tourOpen) return;
+    const step = tourSteps[tourIndex];
+    const el = step?.getEl ? step.getEl() : null;
+    if (!el || typeof el.getBoundingClientRect !== 'function') {
+      setTourRect(null);
+      setTourTooltipPos({ top: 24, left: 24, placement: 'bottom' });
+      return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    const padding = 10;
+    const highlight = {
+      top: Math.max(0, rect.top - padding),
+      left: Math.max(0, rect.left - padding),
+      width: Math.min(window.innerWidth, rect.width + padding * 2),
+      height: Math.min(window.innerHeight, rect.height + padding * 2)
+    };
+    setTourRect(highlight);
+
+    const tooltipWidth = 340;
+    const tooltipHeight = 180;
+    const gap = 15;
+
+    let placement = 'bottom';
+    let top = rect.bottom + gap;
+    let left = rect.left + (rect.width / 2) - (tooltipWidth / 2);
+
+    if (top + tooltipHeight > window.innerHeight) {
+      placement = 'top';
+      top = rect.top - gap - tooltipHeight;
+    }
+
+    // Horizontal bounds
+    left = Math.max(16, Math.min(left, window.innerWidth - tooltipWidth - 16));
+    top = Math.max(16, Math.min(top, window.innerHeight - tooltipHeight - 16));
+
+    setTourTooltipPos({ top, left, placement });
+  }, [tourIndex, tourOpen, tourSteps]);
+
+  useEffect(() => {
+    if (tourOpen) {
+      computeTourLayout();
+      window.addEventListener('resize', computeTourLayout);
+      return () => window.removeEventListener('resize', computeTourLayout);
+    }
+  }, [tourOpen, computeTourLayout]);
+
+  const startTour = (lang) => {
+    if (lang !== language) {
+      toggleLanguage(); // Since LanguageContext only has toggle, we assume this works for 2 langs
+    }
+    setShowTourLangModal(false);
+    setTourOpen(true);
+    setTourIndex(0);
+  };
+
+  const nextTour = () => {
+    if (tourIndex < tourSteps.length - 1) {
+      setTourIndex(tourIndex + 1);
+    } else {
+      closeTour();
+    }
+  };
+
+  const prevTour = () => {
+    if (tourIndex > 0) {
+      setTourIndex(tourIndex - 1);
+    }
+  };
+
+  const closeTour = () => {
+    setTourOpen(false);
+    localStorage.setItem(`deptAdminTourSeen_${activePage}`, 'true');
+  };
+
+  // Check for first time login tour per page
+  useEffect(() => {
+    const tourSeen = localStorage.getItem(`deptAdminTourSeen_${activePage}`);
+    if (!tourSeen && user) {
+      // Delay slightly to ensure elements are rendered
+      const timer = setTimeout(() => {
+        setShowTourLangModal(true);
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else {
+      setShowTourLangModal(false);
+    }
+  }, [activePage, user]);
 
   const tr = useCallback(
     (key, fallback) => {
@@ -121,6 +380,107 @@ const DepartmentAdminDashboard = () => {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
+  }, []);
+
+  const loadDashboardData = useCallback(async () => {
+    try {
+      const data = await dataService.apiCall('/dashboard/dept-admin');
+      if (data.success) {
+        setDashboardStats(data.stats);
+      }
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const loadComplaints = useCallback(async () => {
+    try {
+      const data = await dataService.getComplaints('dept-admin', filters);
+      if (data.success) {
+        setComplaints(data.complaints);
+      }
+    } catch (error) {
+      console.error('Error loading complaints:', error);
+    }
+  }, [filters]);
+
+  const loadOfficers = useCallback(async () => {
+    try {
+      const data = await dataService.getOfficers('dept-admin');
+      if (data.success) {
+        setOfficers(data.officers);
+      }
+    } catch (error) {
+      console.error('Error loading officers:', error);
+    }
+  }, []);
+
+  const loadMapData = useCallback(async () => {
+    try {
+      const data = await dataService.getMapData('dept-admin');
+      if (data.success) {
+        setComplaints(data.complaints);
+        setOfficers(data.officers);
+      }
+    } catch (error) {
+      console.error('Error loading map data:', error);
+    }
+  }, []);
+
+  const loadPendingVerifications = useCallback(async () => {
+    try {
+      const data = await dataService.apiCall('/dashboard/verification/pending');
+      if (data.success) {
+        setComplaints(data.complaints);
+      }
+    } catch (error) {
+      console.error('Error loading pending verifications:', error);
+    }
+  }, []);
+
+  const loadMessages = useCallback(async () => {
+    try {
+      const data = await dataService.apiCall('/dashboard/messages/dept-admin');
+      if (data.success) {
+        setRecentMessages(data.messages);
+      }
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+  }, []);
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const data = await dataService.getNotifications();
+      if (data.success) {
+        setNotifications(data.notifications);
+      }
+    } catch (error) {
+      console.error('Error loading notifications:', error);
+    }
+  }, []);
+
+  const loadReports = useCallback(async () => {
+    try {
+      const data = await dataService.getReports('dept-admin');
+      if (data.success) {
+        setDashboardStats(prevStats => ({
+          ...prevStats,
+          reportData: data.reportData
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading reports:', error);
+    }
+  }, []);
+
+  const playNotifySound = useCallback(() => {
+    try {
+      const audio = new Audio('/notification.mp3');
+      audio.play().catch(() => {});
+    } catch (_) {}
   }, []);
 
   // Load user data and initialize dashboard
@@ -222,16 +582,18 @@ const DepartmentAdminDashboard = () => {
           setHasNewMessage(true);
           if (activePage === 'communication') await loadMessages();
           playNotifySound();
-          setToast({ title: 'New message', text: 'You have a new message.' });
-          setTimeout(() => setToast(null), 4000);
+          setNotificationType('info');
+          setNotificationMessage('You have a new message.');
+          setShowNotification(true);
         });
 
         dataService.subscribe('newMessage', async () => {
           setHasNewMessage(true);
           if (activePage === 'communication') await loadMessages();
           playNotifySound();
-          setToast({ title: 'New update', text: 'New complaint message.' });
-          setTimeout(() => setToast(null), 4000);
+          setNotificationType('info');
+          setNotificationMessage('New complaint message.');
+          setShowNotification(true);
         });
       };
       
@@ -241,7 +603,7 @@ const DepartmentAdminDashboard = () => {
       console.error('Error parsing user data:', error);
       navigate('/role-selection');
     }
-  }, [navigate]);
+  }, [navigate, activePage, loadMessages, loadNotifications, playNotifySound]);
 
   // Load dashboard data based on active page
   useEffect(() => {
@@ -274,110 +636,14 @@ const DepartmentAdminDashboard = () => {
           break;
       }
     }
-  }, [activePage, user]);
+  }, [activePage, user, loadDashboardData, loadComplaints, loadOfficers, loadMapData, loadPendingVerifications, loadMessages, loadNotifications, loadReports]);
 
   // Reload complaints when filters change while on complaints page
   useEffect(() => {
     if (activePage === 'complaints') {
       loadComplaints();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters, activePage, filtersVersion]);
-
-
-  const loadDashboardData = useCallback(async () => {
-    try {
-      const data = await dataService.apiCall('/dashboard/dept-admin');
-      if (data.success) {
-        setDashboardStats(data.stats);
-      }
-    } catch (error) {
-      console.error('Error loading dashboard data:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const loadComplaints = useCallback(async () => {
-    try {
-      const data = await dataService.getComplaints('dept-admin', filters);
-      if (data.success) {
-        setComplaints(data.complaints);
-      }
-    } catch (error) {
-      console.error('Error loading complaints:', error);
-    }
-  }, [filters]);
-
-  const loadOfficers = async () => {
-    try {
-      const data = await dataService.getOfficers('dept-admin');
-      if (data.success) {
-        setOfficers(data.officers);
-      }
-    } catch (error) {
-      console.error('Error loading officers:', error);
-    }
-  };
-
-  const loadMapData = async () => {
-    try {
-      const data = await dataService.getMapData('dept-admin');
-      if (data.success) {
-        setComplaints(data.complaints);
-        setOfficers(data.officers);
-      }
-    } catch (error) {
-      console.error('Error loading map data:', error);
-    }
-  };
-
-  const loadPendingVerifications = async () => {
-    try {
-      const data = await dataService.apiCall('/dashboard/verification/pending');
-      if (data.success) {
-        setComplaints(data.complaints);
-      }
-    } catch (error) {
-      console.error('Error loading pending verifications:', error);
-    }
-  };
-
-  const loadMessages = async () => {
-    try {
-      const data = await dataService.apiCall('/dashboard/messages/dept-admin');
-      if (data.success) {
-        setRecentMessages(data.messages);
-      }
-    } catch (error) {
-      console.error('Error loading messages:', error);
-    }
-  };
-
-  const loadNotifications = async () => {
-    try {
-      const data = await dataService.getNotifications();
-      if (data.success) {
-        setNotifications(data.notifications);
-      }
-    } catch (error) {
-      console.error('Error loading notifications:', error);
-    }
-  };
-
-  const loadReports = async () => {
-    try {
-      const data = await dataService.getReports('dept-admin');
-      if (data.success) {
-        setDashboardStats(prevStats => ({
-          ...prevStats,
-          reportData: data.reportData
-        }));
-      }
-    } catch (error) {
-      console.error('Error loading reports:', error);
-    }
-  };
+  }, [filters, activePage, filtersVersion, loadComplaints]);
 
   // Refresh all data function
   const refreshAllData = useCallback(async () => {
@@ -407,17 +673,24 @@ const DepartmentAdminDashboard = () => {
       if (action === 'reroute') {
         const result = await dataService.requestReroute(complaintId, data.departmentId, data.reason);
         if (!result.success) {
-          alert(result.message || t('error'));
+          setNotificationType('error');
+          setNotificationMessage(result.message || t('error'));
+          setShowNotification(true);
           return;
         }
         loadComplaints();
         loadDashboardData();
         setShowComplaintModal(false);
+        setNotificationType('success');
+        setNotificationMessage('Complaint rerouted successfully');
+        setShowNotification(true);
         return;
       }
       const result = await dataService.apiCall(`/dashboard/complaints/${complaintId}/${action}`, { method: 'PUT', body: JSON.stringify(data) });
       if (!result.success) {
-        alert(result.message || t('error'));
+        setNotificationType('error');
+        setNotificationMessage(result.message || t('error'));
+        setShowNotification(true);
         return;
       }
 
@@ -435,7 +708,9 @@ const DepartmentAdminDashboard = () => {
       }
     } catch (error) {
       console.error('Error performing complaint action:', error);
-      alert(error.message || t('error'));
+      setNotificationType('error');
+      setNotificationMessage(error.message || t('error'));
+      setShowNotification(true);
     }
   };
 
@@ -445,44 +720,19 @@ const DepartmentAdminDashboard = () => {
       if (result.success) {
         loadComplaints();
         setShowAssignmentModal(false);
+        setNotificationType('success');
+        setNotificationMessage(t('officerAssignedSuccess') || 'Officer assigned successfully');
+        setShowNotification(true);
       } else {
-        alert(result.message || 'Failed to assign officer');
+        setNotificationType('error');
+        setNotificationMessage(result.message || 'Failed to assign officer');
+        setShowNotification(true);
       }
     } catch (error) {
       console.error('Error assigning officer:', error);
-      alert(error.message || 'Failed to assign officer');
-    }
-  };
-
-  const handleNotificationClick = async (notification) => {
-    // Mark as read
-    if (!notification.isRead) {
-      try {
-        await dataService.markNotificationAsRead(notification.id || notification._id);
-        setNotifications(prev => 
-          prev.map(n => (n.id === notification.id || n._id === notification._id) ? { ...n, isRead: true } : n)
-        );
-      } catch (error) {
-        console.error('Error marking notification as read:', error);
-      }
-    }
-
-    // Navigate to related item
-    if (notification.relatedTo === 'complaint' && notification.relatedId) {
-      try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`${dataService.apiBaseUrl}/complaints/${notification.relatedId}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.success) {
-          setSelectedComplaint(data.complaint);
-          setShowComplaintModal(true);
-          setShowNotifications(false); // Close dropdown
-        }
-      } catch (error) {
-        console.error('Error fetching related complaint:', error);
-      }
+      setNotificationType('error');
+      setNotificationMessage(error.message || 'Failed to assign officer');
+      setShowNotification(true);
     }
   };
 
@@ -520,34 +770,37 @@ const DepartmentAdminDashboard = () => {
         <div className="sidebar-header">
           <div className="header-top">
             <div className="app-branding">
+              <img className="app-logo" src={`${process.env.PUBLIC_URL}/awazeshehr.jpeg`} alt={t('appTitle')} />
               <h2>{t('appTitle')}</h2>
+              <div className="dept-badge">{user?.department || 'WASA'}</div>
             </div>
             <button 
               className="internal-toggle-btn" 
               onClick={toggleSidebar}
               aria-label={isMobile ? (sidebarMobileOpen ? "Close sidebar" : "Open sidebar") : (sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}
             >
-              <i className={`fas ${isMobile ? (sidebarMobileOpen ? 'fa-times' : 'fa-bars') : (sidebarCollapsed ? 'fa-bars' : 'fa-times')}`}></i>
+              <i className={`fas ${isMobile ? (sidebarMobileOpen ? 'fa-times' : 'fa-indent') : (sidebarCollapsed ? 'fa-indent' : 'fa-outdent')}`}></i>
             </button>
           </div>
         </div>
-        
-        
 
-        <div className="sidebar-menu">
+        <div className="sidebar-menu" ref={sidebarMenuRef}>
           {[
             { id: 'dashboard', icon: 'fa-gauge', label: tr('dashboard', 'Dashboard') },
-            { id: 'complaints', icon: 'fa-clipboard-list', label: tr('complaintManagement', 'Complaint Management') },
-            { id: 'verification', icon: 'fa-clipboard-check', label: tr('verificationClosure', 'Verification & Closure') },
-            { id: 'officers', icon: 'fa-users', label: tr('officerManagement', 'Officer Management') },
-            { id: 'map', icon: 'fa-map-marked-alt', label: tr('liveMap', 'Live Map') },
-            { id: 'communication', icon: 'fa-comments', label: tr('communication', 'Communication'), showDot: true },
-            { id: 'reports', icon: 'fa-chart-line', label: tr('reportsAnalytics', 'Reports & Analytics') },
+            { id: 'complaints', icon: 'fa-clipboard-list', label: tr('complaintManagement', 'Complaints') },
+            { id: 'verification', icon: 'fa-check-double', label: tr('verificationClosure', 'Verification') },
+            { id: 'officers', icon: 'fa-users-cog', label: tr('officerManagement', 'Officers') },
+            { id: 'map', icon: 'fa-map-marked-alt', label: tr('liveMapTracking', 'Live Map') },
+            { id: 'communication', icon: 'fa-comments', label: tr('communication', 'Messages'), showDot: true },
+            { id: 'reports', icon: 'fa-chart-pie', label: tr('reportsAnalytics', 'Reports') },
           ].map(item => (
             <div
               key={item.id}
               className={`menu-item ${activePage === item.id ? 'active' : ''}`}
-              onClick={() => setActivePage(item.id)}
+              onClick={() => {
+                setActivePage(item.id);
+                if(isMobile) setSidebarMobileOpen(false);
+              }}
             >
               <i className={`fas ${item.icon}`}></i>
               <span>{item.label}</span>
@@ -556,22 +809,18 @@ const DepartmentAdminDashboard = () => {
               )}
             </div>
           ))}
+        </div>
 
-          <div className="menu-item" onClick={handleLogout}>
+        <div className="sidebar-footer">
+          <div className="menu-item logout-item" onClick={handleLogout}>
             <i className="fas fa-sign-out-alt"></i>
-            <span>{tr('logout', 'Logout')}</span>
+            <span>{t('logout')}</span>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
       <div className={`main-content ${sidebarCollapsed ? 'collapsed' : ''}`}>
-        {toast && (
-          <div className="toast-notify slide-in">
-            <div className="toast-title">{toast.title}</div>
-            <div className="toast-text">{toast.text}</div>
-          </div>
-        )}
         {/* Header */}
         <div className="header">
           <div className="user-info">
@@ -595,7 +844,7 @@ const DepartmentAdminDashboard = () => {
               </p>
             </div>
           </div>
-          <div className="header-actions">
+          <div className="header-actions" ref={headerActionsRef}>
             <button 
               onClick={toggleLanguage}
               className="btn btn-sm btn-outline"
@@ -632,7 +881,7 @@ const DepartmentAdminDashboard = () => {
                           <div className="notification-text">
                             <p className="notif-title">{notif.title}</p>
                             <p className="notif-message">{notif.message}</p>
-                            <span className="notif-time">{new Date(notif.createdAt).toLocaleTimeString()}</span>
+                            <span className="notif-time">{new Date(notif.createdAt || notif.timestamp).toLocaleTimeString()}</span>
                           </div>
                         </div>
                       ))
@@ -659,6 +908,9 @@ const DepartmentAdminDashboard = () => {
             stats={dashboardStats}
             complaints={complaints}
             officers={officers.slice(0, 3)}
+            statsRef={dashboardStatsRef}
+            recentRef={recentComplaintsRef}
+            activeRef={activeOfficersRef}
             onViewComplaint={(complaint) => {
               setSelectedComplaint(complaint);
               setShowComplaintModal(true);
@@ -673,6 +925,8 @@ const DepartmentAdminDashboard = () => {
             filters={filters}
             onFilterChange={setFilters}
             setFiltersVersion={setFiltersVersion}
+            filterBarRef={filterBarRef}
+            complaintsTableRef={complaintsTableRef}
             onViewComplaint={(complaint) => {
               setSelectedComplaint(complaint);
               setShowComplaintModal(true);
@@ -690,6 +944,8 @@ const DepartmentAdminDashboard = () => {
           <OfficerManagementPage
             officers={officers}
             complaints={complaints}
+            createBtnRef={createOfficerBtnRef}
+            officersTableRef={officersTableRef}
             onAssignComplaint={(complaint) => {
               setSelectedComplaint(complaint);
               setShowAssignmentModal(true);
@@ -707,6 +963,7 @@ const DepartmentAdminDashboard = () => {
           <MapTrackingPage
             complaints={complaints}
             officers={officers}
+            tourRef={mapContainerRef}
             onViewComplaint={(complaint) => {
               setSelectedComplaint(complaint);
               setShowComplaintModal(true);
@@ -718,6 +975,7 @@ const DepartmentAdminDashboard = () => {
         {activePage === 'verification' && (
           <VerificationPage
             complaints={complaints}
+            tourRef={verificationTableRef}
             onVerifyComplaint={handleComplaintAction}
             onViewComplaint={(complaint) => {
               setSelectedComplaint(complaint);
@@ -733,7 +991,13 @@ const DepartmentAdminDashboard = () => {
             complaints={complaints}
             officers={officers}
             lastSeenMessageAt={lastSeenMessageAt}
-            onOpenChat={null}
+            tourRef={commsListRef}
+            onOpenDirectChat={(senderId) => {
+              const found = officers.find(o => String(o?._id) === String(senderId));
+              if (found) {
+                setDirectChatRecipient({ ...found, role: 'field-officer' });
+              }
+            }}
           />
         )}
 
@@ -743,6 +1007,7 @@ const DepartmentAdminDashboard = () => {
             stats={dashboardStats}
             complaints={complaints}
             officers={officers}
+            tourRef={chartsContainerRef}
           />
         )}
       </div>
@@ -788,13 +1053,127 @@ const DepartmentAdminDashboard = () => {
         />
       )}
 
-      {/* Direct Chat Disabled */}
+      {directChatRecipient && user && (
+        <DirectChatModal
+          recipient={directChatRecipient}
+          currentUser={user}
+          onClose={() => setDirectChatRecipient(null)}
+        />
+      )}
+
+      {/* Tour Language Selection Modal */}
+      {showTourLangModal && (
+        <div className="tour-modal-overlay">
+          <div className="tour-modal">
+            <div className="tour-modal-icon">
+              <i className="fas fa-map-signs"></i>
+            </div>
+            <h2>Quick Guide</h2>
+            <p>Welcome to your new dashboard! Would you like a quick professional tour to help you get started? Choose your language below.</p>
+            <div className="lang-options">
+              <button type="button" className="lang-btn" onClick={() => startTour('english')}>
+                <i className="fas fa-globe-americas"></i>
+                <span>English</span>
+                <span>International</span>
+              </button>
+              <button type="button" className="lang-btn" onClick={() => startTour('urdu')}>
+                <i className="fas fa-language"></i>
+                <span>اردو</span>
+                <span>مقامی زبان</span>
+              </button>
+            </div>
+            <button type="button" className="tour-skip-link" onClick={() => {
+              setShowTourLangModal(false);
+              localStorage.setItem(`deptAdminTourSeen_${activePage}`, 'true');
+            }}>
+              Skip tour for now
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Notification Popup (Center Modal) */}
+      {showNotification && (
+        <div className="notification-popup-overlay">
+          <div className={`notification-popup active ${notificationType}`}>
+            <div className={`notification-icon ${notificationType}`}>
+              <i className={`fas ${
+                notificationType === 'success' ? 'fa-check-circle' : 
+                notificationType === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'
+              }`}></i>
+            </div>
+            <div className="notification-content">
+              <h3 className="notification-title">
+                {notificationType === 'success' ? (t('success') || 'Success') : 
+                 notificationType === 'error' ? (t('error') || 'Error') : (t('info') || 'Info')}
+              </h3>
+              <div className="notification-message">{notificationMessage}</div>
+            </div>
+            <button 
+              className={`notification-close-btn ${notificationType}`}
+              onClick={() => setShowNotification(false)}
+            >
+              {t('close') || 'Close'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Guided Tour Overlay */}
+      {tourOpen && (
+        <div className="tour-overlay">
+          <div className="tour-dim" onClick={closeTour} />
+          {tourRect && (
+            <div 
+              className="tour-highlight"
+              style={{
+                top: `${tourRect.top}px`,
+                left: `${tourRect.left}px`,
+                width: `${tourRect.width}px`,
+                height: `${tourRect.height}px`
+              }}
+            />
+          )}
+          <div 
+            className="tour-tooltip"
+            style={{ 
+              top: `${tourTooltipPos.top}px`, 
+              left: `${tourTooltipPos.left}px`
+            }}
+          >
+            <div className="tour-step-indicator">
+              Step {tourIndex + 1} of {tourSteps.length}
+            </div>
+            <div className="tour-title">{tourSteps[tourIndex]?.title}</div>
+            <div className="tour-body">{tourSteps[tourIndex]?.body}</div>
+            <div className="tour-actions">
+              <button className="tour-btn ghost" onClick={closeTour}>
+                {language === 'urdu' ? 'چھوڑیں' : 'Skip'}
+              </button>
+              <div className="tour-actions-right">
+                <button 
+                  className="tour-btn ghost" 
+                  onClick={prevTour}
+                  disabled={tourIndex === 0}
+                >
+                  {language === 'urdu' ? 'پیچھے' : 'Back'}
+                </button>
+                <button className="tour-btn primary" onClick={nextTour}>
+                  {tourIndex === tourSteps.length - 1 
+                    ? (language === 'urdu' ? 'ختم کریں' : 'Finish') 
+                    : (language === 'urdu' ? 'اگلا' : 'Next')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 // Dashboard Page Component
-const DashboardPage = ({ stats, complaints, officers, onViewComplaint }) => {
+const DashboardPage = ({ stats, complaints, officers, onViewComplaint, statsRef, recentRef, activeRef }) => {
   const { t } = useLanguage();
   const tr = (key, fallback) => {
     const v = t(key);
@@ -802,7 +1181,6 @@ const DashboardPage = ({ stats, complaints, officers, onViewComplaint }) => {
     return v;
   };
   const overdueCount = Array.isArray(complaints) ? complaints.filter(c => c.dueDate && new Date(c.dueDate) < new Date() && !['resolved','completed'].includes(c.status)).length : 0;
-  const highPriorityCount = Array.isArray(complaints) ? complaints.filter(c => (c.priority === 'high' || c.priority === 'High')).length : 0;
   const resolvedToday = Array.isArray(complaints) ? complaints.filter(c => {
     if (!c.updatedAt) return false;
     const d = new Date(c.updatedAt);
@@ -813,27 +1191,22 @@ const DashboardPage = ({ stats, complaints, officers, onViewComplaint }) => {
   <div className="page-content active">
     <h2 className="form-title">{t('deptAdminDashboard')}</h2>
     
-    <div className="dashboard-cards">
+    <div className="dashboard-cards" ref={statsRef}>
       {[
         { value: stats.totalComplaints, title: t('totalComplaints'), icon: 'fa-clipboard-list', type: 'total' },
         { value: stats.pendingComplaints, title: t('pending'), icon: 'fa-clock', type: 'pending' },
         { value: stats.inProgressComplaints, title: t('inProgress'), icon: 'fa-spinner', type: 'progress' },
         { value: resolvedToday || stats.resolvedComplaints, title: resolvedToday ? (t('resolved') + ' ' + tr('today', 'Today')) : t('resolved'), icon: 'fa-check-circle', type: 'resolved' },
-        { value: overdueCount, title: tr('overdueOnly', 'Overdue'), icon: 'fa-exclamation-triangle', type: 'warning' },
-        { value: highPriorityCount, title: tr('priorityHigh', 'High Priority'), icon: 'fa-flag', type: 'danger' },
-        { value: stats.completedComplaints, title: t('completed'), icon: 'fa-check-double', type: 'completed' },
-        { value: stats.activeOfficers, title: t('activeOfficers'), icon: 'fa-users', type: 'officers' },
-        { value: `${stats.avgResolutionTime}h`, title: t('avgResolutionTime'), icon: 'fa-clock', type: 'time' },
-        { value: `${stats.satisfactionRate}%`, title: t('satisfactionRate'), icon: 'fa-star', type: 'rating' }
+        { value: overdueCount, title: tr('overdueOnly', 'Overdue'), icon: 'fa-exclamation-triangle', type: 'danger' },
       ].map(card => (
         <div key={card.type} className="card">
-          <div className="card-header">
-            <div>
-              <div className="card-value">{card.value}</div>
-              <div className="card-title">{card.title}</div>
-            </div>
+          <div className="card-body">
             <div className={`card-icon ${card.type}`}>
               <i className={`fas ${card.icon}`}></i>
+            </div>
+            <div className="card-info">
+              <div className="card-value">{card.value}</div>
+              <div className="card-title">{card.title}</div>
             </div>
           </div>
         </div>
@@ -841,7 +1214,7 @@ const DashboardPage = ({ stats, complaints, officers, onViewComplaint }) => {
     </div>
 
     <div className="dashboard-grid">
-      <div className="recent-complaints">
+      <div className="recent-complaints" ref={recentRef}>
         <h3>{t('recentComplaints')}</h3>
         <div className="complaints-list">
           {complaints.map(complaint => (
@@ -860,7 +1233,7 @@ const DashboardPage = ({ stats, complaints, officers, onViewComplaint }) => {
         </div>
       </div>
 
-      <div className="active-officers">
+      <div className="active-officers" ref={activeRef}>
         <h3>{t('activeOfficers')}</h3>
         <div className="officers-list">
           {officers.map(officer => (
@@ -889,7 +1262,7 @@ const DashboardPage = ({ stats, complaints, officers, onViewComplaint }) => {
 };
 
 // Complaint Management Page Component
-const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewComplaint, onAssignOfficer, onComplaintAction, setFiltersVersion }) => {
+const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewComplaint, onAssignOfficer, onComplaintAction, setFiltersVersion, filterBarRef, complaintsTableRef }) => {
   const { t } = useLanguage();
   const tr = (key, fallback) => {
     const v = t(key);
@@ -971,7 +1344,7 @@ const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewCo
     <div className="page-content active">
       <h2 className="form-title">{t('complaintManagement')}</h2>
       
-      <div className="filters">
+      <div className="filters" ref={filterBarRef}>
         <div className="filter-group">
           <label className="filter-label">{t('searchPlaceholder')}</label>
           <input 
@@ -1005,6 +1378,7 @@ const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewCo
             onChange={(e) => handleFilterChange('status', e.target.value)}
           >
             <option value="all">{t('allStatuses')}</option>
+            <option value="unassigned">{tr('unassigned', 'Unassigned')}</option>
             <option value="pending">{t('pending')}</option>
             <option value="under-review">{tr('underReview', 'Under Review')}</option>
             <option value="in-progress">{t('inProgress')}</option>
@@ -1092,18 +1466,18 @@ const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewCo
       </div>
       )}
 
-      <div className="complaints-table table-responsive">
+      <div className="complaints-table table-responsive" ref={complaintsTableRef}>
         <table>
           <thead>
             <tr>
-              <th role="button" onClick={() => handleSort('complaintId')} aria-sort={sortBy.key==='complaintId'?sortBy.dir:'none'}>{t('complaintId')}</th>
-              <th role="button" onClick={() => handleSort('category')} aria-sort={sortBy.key==='category'?sortBy.dir:'none'}>{t('category')}</th>
-              <th role="button" onClick={() => handleSort('citizenName')} aria-sort={sortBy.key==='citizenName'?sortBy.dir:'none'}>{t('citizen')}</th>
-              <th role="button" onClick={() => handleSort('status')} aria-sort={sortBy.key==='status'?sortBy.dir:'none'}>{t('status')}</th>
-              <th role="button" onClick={() => handleSort('priority')} aria-sort={sortBy.key==='priority'?sortBy.dir:'none'}>{t('priority')}</th>
+              <th onClick={() => handleSort('complaintId')} aria-sort={sortBy.key==='complaintId'?sortBy.dir:'none'}>{t('complaintId')}</th>
+              <th onClick={() => handleSort('category')} aria-sort={sortBy.key==='category'?sortBy.dir:'none'}>{t('category')}</th>
+              <th onClick={() => handleSort('citizenName')} aria-sort={sortBy.key==='citizenName'?sortBy.dir:'none'}>{t('citizen')}</th>
+              <th onClick={() => handleSort('status')} aria-sort={sortBy.key==='status'?sortBy.dir:'none'}>{t('status')}</th>
+              <th onClick={() => handleSort('priority')} aria-sort={sortBy.key==='priority'?sortBy.dir:'none'}>{t('priority')}</th>
               <th>{t('assignedTo')}</th>
-              <th role="button" onClick={() => handleSort('dueDate')} aria-sort={sortBy.key==='dueDate'?sortBy.dir:'none'}>{tr('dueDate', 'Due Date')}</th>
-              <th role="button" onClick={() => handleSort('createdAt')} aria-sort={sortBy.key==='createdAt'?sortBy.dir:'none'}>{t('created')}</th>
+              <th onClick={() => handleSort('dueDate')} aria-sort={sortBy.key==='dueDate'?sortBy.dir:'none'}>{tr('dueDate', 'Due Date')}</th>
+              <th onClick={() => handleSort('createdAt')} aria-sort={sortBy.key==='createdAt'?sortBy.dir:'none'}>{t('created')}</th>
               <th>{tr('actions', 'Actions')}</th>
             </tr>
           </thead>
@@ -1177,7 +1551,7 @@ const ComplaintManagementPage = ({ complaints, filters, onFilterChange, onViewCo
 };
 
 // Officer Management Page Component
-const OfficerManagementPage = ({ officers, complaints, onAssignComplaint, onCreateOfficer, onChat }) => {
+const OfficerManagementPage = ({ officers, complaints, onAssignComplaint, onCreateOfficer, onChat, createBtnRef, officersTableRef }) => {
   const { t } = useLanguage();
   const tr = (key, fallback) => {
     const v = t(key);
@@ -1187,15 +1561,43 @@ const OfficerManagementPage = ({ officers, complaints, onAssignComplaint, onCrea
   const [fullName, setFullName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [passwordRequirements, setPasswordRequirements] = React.useState({
+    length: false,
+    uppercase: false,
+    lowercase: false,
+    number: false,
+    special: false
+  });
   const [wageType, setWageType] = React.useState('Monthly');
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    const pass = String(password || '');
+    setPasswordRequirements({
+      length: pass.length >= 6,
+      uppercase: /[A-Z]/.test(pass),
+      lowercase: /[a-z]/.test(pass),
+      number: /\d/.test(pass),
+      special: /[^a-zA-Z0-9]/.test(pass)
+    });
+  }, [password]);
+
+  const meetsPasswordRequirements =
+    passwordRequirements.length &&
+    passwordRequirements.uppercase &&
+    passwordRequirements.lowercase &&
+    passwordRequirements.number &&
+    passwordRequirements.special;
 
   const handleCreate = async (e) => {
     e.preventDefault();
     setError('');
     setIsSubmitting(true);
     try {
+      if (!meetsPasswordRequirements) {
+        throw new Error(t('passwordDoesNotMeetRequirements') || 'Password does not meet requirements');
+      }
       await onCreateOfficer({ fullName, email, password, wageType });
       setFullName('');
       setEmail('');
@@ -1212,11 +1614,40 @@ const OfficerManagementPage = ({ officers, complaints, onAssignComplaint, onCrea
     <div className="page-content active">
       <h2 className="form-title">{t('officerManagement')}</h2>
 
-      <div className="complaints-filters" style={{ marginBottom: 20 }}>
+      <div className="complaints-filters" style={{ marginBottom: 20 }} ref={createBtnRef}>
         <form onSubmit={handleCreate} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
           <input className="filter-input" placeholder={t('fullName')} value={fullName} onChange={(e) => setFullName(e.target.value)} required />
           <input className="filter-input" type="email" placeholder={t('email')} value={email} onChange={(e) => setEmail(e.target.value)} required />
-          <input className="filter-input" type="password" placeholder={t('password')} value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <div className="da-password-field">
+            <input className="filter-input" type="password" placeholder={t('password')} value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <div className="da-password-requirements">
+              <div className="da-password-requirements-title">{t('passwordRequirements') || 'Password Requirements'}</div>
+              <div className={`da-req-item ${passwordRequirements.length ? 'met' : ''}`}>
+                <i className={`fas ${passwordRequirements.length ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                <span>{t('min6Chars') || 'Minimum 6 characters'}</span>
+              </div>
+              <div className="da-req-row">
+                <div className={`da-req-item ${passwordRequirements.uppercase ? 'met' : ''}`}>
+                  <i className={`fas ${passwordRequirements.uppercase ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                  <span>{t('uppercase') || 'Uppercase'}</span>
+                </div>
+                <div className={`da-req-item ${passwordRequirements.lowercase ? 'met' : ''}`}>
+                  <i className={`fas ${passwordRequirements.lowercase ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                  <span>{t('lowercase') || 'Lowercase'}</span>
+                </div>
+              </div>
+              <div className="da-req-row">
+                <div className={`da-req-item ${passwordRequirements.number ? 'met' : ''}`}>
+                  <i className={`fas ${passwordRequirements.number ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                  <span>{t('number') || 'Number'}</span>
+                </div>
+                <div className={`da-req-item ${passwordRequirements.special ? 'met' : ''}`}>
+                  <i className={`fas ${passwordRequirements.special ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                  <span>{t('specialChar') || 'Special Char'}</span>
+                </div>
+              </div>
+            </div>
+          </div>
           
           <div className="wage-select-wrapper" style={{ position: 'relative' }}>
             <select 
@@ -1245,7 +1676,7 @@ const OfficerManagementPage = ({ officers, complaints, onAssignComplaint, onCrea
         {error && <div className="status-badge status-pending">{error}</div>}
       </div>
 
-      <div className="officers-grid">
+      <div className="officers-grid" ref={officersTableRef}>
         {officers.map(officer => (
           <div key={officer._id} className="officer-card">
             <div className="officer-header">
@@ -1292,8 +1723,8 @@ const OfficerManagementPage = ({ officers, complaints, onAssignComplaint, onCrea
   );
 };
 
-// Map Tracking Page Component
-const MapTrackingPage = ({ complaints, officers, onViewComplaint }) => {
+// Live Map Tracking Page Component
+const MapTrackingPage = ({ complaints, officers, onViewComplaint, tourRef }) => {
   const { t } = useLanguage();
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -1482,7 +1913,7 @@ const MapTrackingPage = ({ complaints, officers, onViewComplaint }) => {
       </div>
       
       <div 
-        ref={mapRef} 
+        ref={(el) => { mapRef.current = el; tourRef.current = el; }} 
         className="map-view" 
         style={{ flex: 1, width: '100%', borderRadius: '12px', overflow: 'hidden', border: '1px solid #e2e8f0', zIndex: 1 }}
       ></div>
@@ -1492,7 +1923,7 @@ const MapTrackingPage = ({ complaints, officers, onViewComplaint }) => {
 };
 
 // Verification Page Component
-const VerificationPage = ({ complaints, onVerifyComplaint, onViewComplaint }) => {
+const VerificationPage = ({ complaints, onVerifyComplaint, onViewComplaint, tourRef }) => {
   const { t } = useLanguage();
   const tr = (key, fallback) => {
     const v = t(key);
@@ -1503,7 +1934,7 @@ const VerificationPage = ({ complaints, onVerifyComplaint, onViewComplaint }) =>
   <div className="page-content active">
     <h2 className="form-title">{t('verificationClosure')}</h2>
     
-    <div className="verification-list">
+    <div className="verification-list" ref={tourRef}>
       {complaints.filter(c => c.status === 'resolved').length === 0 ? (
         <div className="no-data-message" style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
           <i className="fas fa-check-circle" style={{ fontSize: '48px', marginBottom: '15px', color: '#ccc' }}></i>
@@ -1579,13 +2010,13 @@ const VerificationPage = ({ complaints, onVerifyComplaint, onViewComplaint }) =>
 };
 
 // Communication Page Component
-const CommunicationPage = ({ recentMessages, complaints, officers, lastSeenMessageAt, onOpenChat }) => {
+const CommunicationPage = ({ recentMessages, complaints, officers, lastSeenMessageAt, onOpenDirectChat, tourRef }) => {
   const { t } = useLanguage();
   return (
   <div className="page-content active">
     <h2 className="form-title">{t('communicationCenter')}</h2>
     
-    <div className="communication-grid">
+    <div className="communication-grid" ref={tourRef}>
       <div className="messages-section">
         <h3>{t('recentMessages')}</h3>
         <div className="messages-list">
@@ -1596,7 +2027,11 @@ const CommunicationPage = ({ recentMessages, complaints, officers, lastSeenMessa
               <div 
                 key={message._id} 
                 className={`message-item clickable ${new Date(message.createdAt).getTime() > lastSeenMessageAt ? 'new' : ''}`}
-                onClick={() => {}}
+                onClick={() => {
+                  if (message.senderId && typeof onOpenDirectChat === 'function') {
+                    onOpenDirectChat(message.senderId);
+                  }
+                }}
               >
                 <div className="message-icon">
                   <i className="fas fa-envelope"></i>
@@ -1634,13 +2069,8 @@ const CommunicationPage = ({ recentMessages, complaints, officers, lastSeenMessa
 };
 
 // Reports Page Component
-const ReportsPage = ({ stats, complaints, officers }) => {
+const ReportsPage = ({ stats, complaints, officers, tourRef }) => {
   const { t } = useLanguage();
-  const tr = (key, fallback) => {
-    const v = t(key);
-    if (!v || v === key) return fallback;
-    return v;
-  };
   
   // Prepare data for charts
   const statusData = [
@@ -1822,7 +2252,7 @@ const ReportsPage = ({ stats, complaints, officers }) => {
         </div>
       </div>
       
-      <div className="analytics-dashboard">
+      <div className="analytics-dashboard" ref={tourRef}>
         {/* Status Distribution Chart */}
         <div className="chart-card">
           <h3>{t('complaintStatusDistribution')}</h3>
@@ -2001,17 +2431,65 @@ const ComplaintDetailsModal = ({ complaint, departments, onClose, onAction, onAs
               <label>{t('assignedTo')}:</label>
               <span>{complaint.assignedTo?.fullName || t('unassigned')}</span>
             </div>
+            {complaint.assignedTo && (
+              <div className="detail-item">
+                <label>Officer Email:</label>
+                <span>{complaint.assignedTo.email}</span>
+              </div>
+            )}
             <div className="detail-item">
               <label>{t('assignedDate')}:</label>
               <span>{complaint.assignedDate ? new Date(complaint.assignedDate).toLocaleString() : t('notAssigned')}</span>
             </div>
           </div>
+
+          {complaint.feedback && (
+            <div className="detail-section full-width" style={{ marginTop: '20px', background: '#f0f9ff', padding: '15px', borderRadius: '12px', border: '1px solid #bae6fd' }}>
+              <h4 style={{ color: '#0369a1' }}><i className="fas fa-comment-dots"></i> {t('citizenFeedback') || 'Citizen Feedback'}</h4>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginTop: '10px' }}>
+                <div className="feedback-stars" style={{ fontSize: '1.2rem', color: '#f1c40f' }}>
+                  {[1, 2, 3, 4, 5].map(star => (
+                    <i key={star} className={`${complaint.feedback.rating >= star ? 'fas' : 'far'} fa-star`}></i>
+                  ))}
+                </div>
+                <div className="feedback-sentiment" style={{ 
+                  padding: '4px 10px', 
+                  borderRadius: '20px', 
+                  fontSize: '0.85rem',
+                  background: complaint.feedback.sentiment === 'positive' ? '#dcfce7' : complaint.feedback.sentiment === 'negative' ? '#fee2e2' : '#f1f5f9',
+                  color: complaint.feedback.sentiment === 'positive' ? '#166534' : complaint.feedback.sentiment === 'negative' ? '#991b1b' : '#475569'
+                }}>
+                  {String(complaint.feedback.sentiment || 'neutral').toUpperCase()}
+                  {typeof complaint.feedback.sentimentScore === 'number' ? ` (${complaint.feedback.sentimentScore.toFixed(2)})` : ''}
+                </div>
+              </div>
+              <p style={{ marginTop: '10px', fontStyle: 'italic', color: '#334155' }}>"{complaint.feedback.comment}"</p>
+            </div>
+          )}
         </div>
+
+        {complaint.timeline && complaint.timeline.length > 0 && (
+          <div className="detail-section full-width" style={{ marginTop: '20px' }}>
+            <h4>{tr('trackingHistory', 'Tracking & Action History')}</h4>
+            <div className="tracking-timeline">
+              {complaint.timeline.map((event, idx) => (
+                <div key={idx} className="tracking-event">
+                  <div className="event-time">{new Date(event.at).toLocaleString()}</div>
+                  <div className="event-marker"></div>
+                  <div className="event-content">
+                    <div className="event-message">{event.message}</div>
+                    <div className="event-by">By: {event.byRole || 'System'}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         
         <div className="modal-actions">
-          {!complaint.assignedTo && (
-            <button className="btn btn-primary" onClick={onAssignOfficer}>
-              <i className="fas fa-user-plus"></i> {t('assignOfficer')}
+          {(!complaint.assignedTo || isResolved) && (
+            <button className={`btn ${isResolved ? 'btn-danger' : 'btn-primary'}`} onClick={onAssignOfficer}>
+              <i className={`fas ${isResolved ? 'fa-redo' : 'fa-user-plus'}`}></i> {isResolved ? (t('reopenAndReassign') || 'Reopen & Reassign') : t('assignOfficer')}
             </button>
           )}
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -2091,43 +2569,59 @@ const OfficerAssignmentModal = ({ complaint, officers, onClose, onAssign }) => {
 
   return (
     <div className="modal-overlay active">
-      <div className="modal modal-sm">
+      <div className="modal modal-md">
         <div className="modal-header">
-          <h3 className="modal-title">{t('assignOfficer')}</h3>
+          <h3 className="modal-title">{t('assignOfficer')} - {complaint.complaintId}</h3>
           <button className="close-modal" onClick={onClose}>&times;</button>
         </div>
         <div className="modal-body">
-          <div className="form-group">
-            <label>{t('complaintId')}:</label>
-            <p>{complaint.complaintId}</p>
+          <div className="assignment-info">
+            <div className="info-card">
+              <label>Category</label>
+              <span>{complaint.category}</span>
+            </div>
+            <div className="info-card">
+              <label>Priority</label>
+              <span className={`priority-badge priority-${complaint.priority}`}>{complaint.priority}</span>
+            </div>
           </div>
           
-          <div className="form-group">
-            <label>{t('selectOfficer')}:</label>
-            <select 
-              className="form-control"
-              value={selectedOfficer}
-              onChange={(e) => setSelectedOfficer(e.target.value)}
-            >
-              <option value="">{t('chooseOfficer')}</option>
+          <div className="officer-selection-list">
+            <label className="section-label">Select Field Officer for Assignment</label>
+            <div className="officer-cards-container">
               {(officers || []).map(officer => (
-                <option key={officer._id} value={officer.user?._id || officer._id}>
-                  {officer.fullName} - {officer.department}
-                  {` | Assigned: ${officer.totalAssigned ?? officer.activeComplaints ?? 0}`}
-                  {` | In-Progress: ${officer.inProgress ?? 0}`}
-                  {` | Resolved: ${officer.resolved ?? officer.resolvedThisMonth ?? 0}`}
-                  {` | ${officer.specialization ? officer.specialization : 'N/A'}`}
-                  {` | ${officer.availability ? officer.availability : 'active'}`}
-                </option>
+                <div 
+                  key={officer._id} 
+                  className={`officer-select-card ${selectedOfficer === (officer.user?._id || officer._id) ? 'selected' : ''}`}
+                  onClick={() => setSelectedOfficer(officer.user?._id || officer._id)}
+                >
+                  <div className="officer-select-avatar">
+                    {officer.fullName?.charAt(0)}
+                  </div>
+                  <div className="officer-select-info">
+                    <div className="name">{officer.fullName}</div>
+                    <div className="load-stats">
+                      <span className="load-badge">
+                        <i className="fas fa-tasks"></i> {officer.activeComplaints || 0} Active
+                      </span>
+                      <span className="performance-badge">
+                        <i className="fas fa-check-circle"></i> {officer.resolvedThisMonth || 0} Resolved
+                      </span>
+                    </div>
+                  </div>
+                  <div className="select-indicator">
+                    <i className="fas fa-check-circle"></i>
+                  </div>
+                </div>
               ))}
-            </select>
+            </div>
           </div>
           
-          <div className="modal-actions">
-            <button className="btn btn-primary" onClick={handleAssign}>
-              <i className="fas fa-user-plus"></i> {t('assign')}
+          <div className="modal-actions" style={{ marginTop: '20px' }}>
+            <button className="btn btn-primary btn-full" onClick={handleAssign} disabled={!selectedOfficer}>
+              <i className="fas fa-user-check"></i> Confirm Assignment
             </button>
-            <button className="btn btn-outline" onClick={onClose}>
+            <button className="btn btn-outline btn-full" onClick={onClose}>
               {t('cancel')}
             </button>
           </div>
@@ -2174,19 +2668,3 @@ const CompletionPopup = ({ complaint, onClose }) => {
 };
 
 export default DepartmentAdminDashboard;
-  const playNotifySound = () => {
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'triangle';
-      o.frequency.setValueAtTime(660, ctx.currentTime);
-      g.gain.setValueAtTime(0.001, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
-      o.connect(g);
-      g.connect(ctx.destination);
-      o.start();
-      o.stop(ctx.currentTime + 0.55);
-    } catch (_) {}
-  };

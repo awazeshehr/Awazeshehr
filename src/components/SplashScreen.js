@@ -7,6 +7,7 @@ const SplashScreen = () => {
   const navigate = useNavigate();
   const { t } = useLanguage();
   const particlesContainerRef = useRef(null);
+  const logoUrl = `${process.env.PUBLIC_URL}/awazeshehr.jpeg`;
 
   useEffect(() => {
     // Redirect after animation completes
@@ -126,6 +127,7 @@ const SplashScreen = () => {
       
       <div className="splash-container">
         <div className="logo-container">
+          <img className="splash-logo" src={logoUrl} alt={t('appTitle')} />
           <h1 className="logo-main">{t('appTitle')}</h1>
           <p className="tagline">{t('tagline')}</p>
         </div>
@@ -137,23 +139,23 @@ const SplashScreen = () => {
         <p className="loading-text">{t('loadingPortalServices')}</p>
         
         {/* Rest of your JSX remains the same */}
-        <div className="info-cards">
-          <div className="info-card">
+        <div className="splash-info-cards">
+          <div className="splash-info-card">
             <i className="fas fa-shield-alt"></i>
             <h3>{t('secure')}</h3>
             <p>{t('secureDesc')}</p>
           </div>
-          <div className="info-card">
+          <div className="splash-info-card">
             <i className="fas fa-bolt"></i>
             <h3>{t('fast')}</h3>
             <p>{t('fastDesc')}</p>
           </div>
-          <div className="info-card">
+          <div className="splash-info-card">
             <i className="fas fa-user-lock"></i>
             <h3>{t('private')}</h3>
             <p>{t('privateDesc')}</p>
           </div>
-          <div className="info-card">
+          <div className="splash-info-card">
             <i className="fas fa-check-circle"></i>
             <h3>{t('reliable')}</h3>
             <p>{t('reliableDesc')}</p>

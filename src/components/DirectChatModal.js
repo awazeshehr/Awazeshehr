@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
 import './DirectChatModal.css';
 import dataService from '../services/dataService';
 
@@ -9,7 +8,6 @@ export default function DirectChatModal({ recipient, onClose, currentUser }) {
   const [newMessage, setNewMessage] = useState('');
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
-  const [justOpened, setJustOpened] = useState(true);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -44,9 +42,7 @@ export default function DirectChatModal({ recipient, onClose, currentUser }) {
 
     socketRef.current.on('newDirectMessage', (msg) => {
       setMessages((prev) => [...prev, msg]);
-      if (justOpened) {
-        socketRef.current.emit('markDirectMessagesSeen', { otherUserId: recipient._id });
-      }
+      socketRef.current.emit('markDirectMessagesSeen', { otherUserId: recipient._id });
     });
 
     socketRef.current.on('messageStatusUpdate', (payload) => {

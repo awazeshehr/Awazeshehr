@@ -1,16 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './FieldOfficerDashboard.css';
 import ExcelJS from 'exceljs';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import ComplaintChatPanel from '../components/ComplaintChatPanel';
-import { io } from 'socket.io-client';
+import DirectChatModal from '../components/DirectChatModal';
 import dataService from '../services/dataService';
 import { useLanguage } from '../contexts/LanguageContext';
-import DirectChatModal from '../components/DirectChatModal';
 
 const API_BASE_URL = dataService.apiBaseUrl;
-const SERVER_URL = API_BASE_URL.replace(/\/api\/?$/, '');
+const SERVER_URL = window.location.hostname.includes('vercel.app') 
+  ? 'https://backend-ui1u.onrender.com' 
+  : API_BASE_URL.replace(/\/api\/?$/, '');
+const BRAND_LOGO_URL = `${process.env.PUBLIC_URL}/awazeshehr.jpeg`;
 
 const getImageUrl = (url) => {
   if (!url) return '';
@@ -23,6 +25,9 @@ const FieldOfficerDashboard = () => {
   const { t, language, toggleLanguage } = useLanguage();
   const [activePage, setActivePage] = useState('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showNotification, setShowNotification] = useState(false);
+  const [notificationType, setNotificationType] = useState('success');
+  const [notificationMessage, setNotificationMessage] = useState('');
   const [showComplaintModal, setShowComplaintModal] = useState(false);
   const [showEvidenceModal, setShowEvidenceModal] = useState(false);
   const [selectedComplaint, setSelectedComplaint] = useState(null);
@@ -41,8 +46,218 @@ const FieldOfficerDashboard = () => {
   const [showChatPanel, setShowChatPanel] = useState(false);
   const [chatComplaint, setChatComplaint] = useState(null);
   const [showCalendarModal, setShowCalendarModal] = useState(false);
-  const [chatRecipient, setChatRecipient] = useState(null);
-  const [toast, setToast] = useState(null);
+  const [departmentAdmin, setDepartmentAdmin] = useState(null);
+  const [isDepartmentAdminLoading, setIsDepartmentAdminLoading] = useState(false);
+  const [showAdminChatModal, setShowAdminChatModal] = useState(false);
+
+  const playNotifySound = () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(880, ctx.currentTime);
+      g.gain.setValueAtTime(0.001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start();
+      o.stop(ctx.currentTime + 0.45);
+    } catch (_) {}
+  };
+
+
+  // Tour States
+  const [showTourLangModal, setShowTourLangModal] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourIndex, setTourIndex] = useState(0);
+  const [tourRect, setTourRect] = useState(null);
+  const [tourTooltipPos, setTourTooltipPos] = useState({ top: 0, left: 0, placement: 'bottom' });
+
+  // Refs for Tour
+  const sidebarMenuRef = useRef(null);
+  const dashboardCardsRef = useRef(null);
+  const assignedListRef = useRef(null);
+  const notificationListRef = useRef(null);
+  const performanceChartsRef = useRef(null);
+  const profileSectionRef = useRef(null);
+  const headerActionsRef = useRef(null);
+
+  const tourSteps = useMemo(() => {
+    const isUrdu = language === 'urdu';
+    
+    if (activePage === 'dashboard') {
+      return [
+        {
+          key: 'sidebar',
+          title: isUrdu ? 'نیویگیشن مینو' : 'Navigation Menu',
+          body: isUrdu 
+            ? 'یہاں سے آپ ڈیش بورڈ کے تمام اہم سیکشنز تک رسائی حاصل کر سکتے ہیں جیسے تفویض کردہ شکایات اور اپنی کارکردگی۔' 
+            : 'Access all key sections of the dashboard from here, including assigned complaints and your performance.',
+          getEl: () => sidebarMenuRef.current
+        },
+        {
+          key: 'stats',
+          title: isUrdu ? 'کام کا خلاصہ' : 'Work Summary',
+          body: isUrdu 
+            ? 'یہ کارڈز آپ کو آپ کی تفویض کردہ شکایات کا فوری جائزہ فراہم کرتے ہیں۔' 
+            : 'These cards give you a quick overview of your assigned complaints.',
+          getEl: () => dashboardCardsRef.current
+        },
+        {
+          key: 'header',
+          title: isUrdu ? 'فوری اقدامات' : 'Quick Actions',
+          body: isUrdu 
+            ? 'یہاں سے آپ زبان تبدیل کر سکتے ہیں اور نوٹیفیکیشن دیکھ سکتے ہیں۔' 
+            : 'Switch languages and view notifications from this area.',
+          getEl: () => headerActionsRef.current
+        }
+      ];
+    }
+
+    if (activePage === 'assigned-complaints') {
+      return [
+        {
+          key: 'list',
+          title: isUrdu ? 'تفویض کردہ شکایات' : 'Assigned Complaints',
+          body: isUrdu 
+            ? 'ان تمام شکایات کی فہرست جو آپ کو حل کرنے کے لیے دی گئی ہیں۔ آپ کسی بھی شکایت پر کلک کر کے اس کی تفصیل دیکھ سکتے ہیں یا سٹیٹس اپ ڈیٹ کر سکتے ہیں۔' 
+            : 'List of all complaints assigned to you. Click on any complaint to view details or update status.',
+          getEl: () => assignedListRef.current
+        }
+      ];
+    }
+
+    if (activePage === 'notifications') {
+      return [
+        {
+          key: 'notifs',
+          title: isUrdu ? 'اطلاعات' : 'Notifications',
+          body: isUrdu 
+            ? 'تمام حالیہ اپ ڈیٹس اور ایڈمن کے پیغامات یہاں دیکھے جا سکتے ہیں۔' 
+            : 'All recent updates and messages from the admin can be viewed here.',
+          getEl: () => notificationListRef.current
+        }
+      ];
+    }
+
+    if (activePage === 'performance') {
+      return [
+        {
+          key: 'perf',
+          title: isUrdu ? 'کارکردگی کا جائزہ' : 'Performance Review',
+          body: isUrdu 
+            ? 'یہاں آپ اپنی حل شدہ شکایات اور کارکردگی کے گراف دیکھ سکتے ہیں۔' 
+            : 'View your resolved complaints and performance charts here.',
+          getEl: () => performanceChartsRef.current
+        }
+      ];
+    }
+
+    if (activePage === 'profile') {
+      return [
+        {
+          key: 'prof',
+          title: isUrdu ? 'پروفائل' : 'Profile',
+          body: isUrdu 
+            ? 'اپنی ذاتی معلومات اور ڈیپارٹمنٹ کی تفصیلات یہاں سے مینیج کریں۔' 
+            : 'Manage your personal information and department details from here.',
+          getEl: () => profileSectionRef.current
+        }
+      ];
+    }
+
+    return [];
+  }, [activePage, language]);
+
+  const computeTourLayout = useCallback(() => {
+    if (!tourOpen) return;
+    const step = tourSteps[tourIndex];
+    const el = step?.getEl ? step.getEl() : null;
+    if (!el || typeof el.getBoundingClientRect !== 'function') {
+      setTourRect(null);
+      setTourTooltipPos({ top: 24, left: 24, placement: 'bottom' });
+      return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    const padding = 10;
+    const highlight = {
+      top: Math.max(0, rect.top - padding),
+      left: Math.max(0, rect.left - padding),
+      width: Math.min(window.innerWidth, rect.width + padding * 2),
+      height: Math.min(window.innerHeight, rect.height + padding * 2)
+    };
+    setTourRect(highlight);
+
+    const tooltipWidth = 340;
+    const tooltipHeight = 180;
+    const gap = 15;
+
+    let placement = 'bottom';
+    let top = rect.bottom + gap;
+    let left = rect.left + (rect.width / 2) - (tooltipWidth / 2);
+
+    if (top + tooltipHeight > window.innerHeight) {
+      placement = 'top';
+      top = rect.top - gap - tooltipHeight;
+    }
+
+    left = Math.max(16, Math.min(left, window.innerWidth - tooltipWidth - 16));
+    top = Math.max(16, Math.min(top, window.innerHeight - tooltipHeight - 16));
+
+    setTourTooltipPos({ top, left, placement });
+  }, [tourIndex, tourOpen, tourSteps]);
+
+  useEffect(() => {
+    if (tourOpen) {
+      computeTourLayout();
+      window.addEventListener('resize', computeTourLayout);
+      return () => window.removeEventListener('resize', computeTourLayout);
+    }
+  }, [tourOpen, computeTourLayout]);
+
+  const startTour = (lang) => {
+    if (lang !== language) {
+      toggleLanguage();
+    }
+    setShowTourLangModal(false);
+    setTourOpen(true);
+    setTourIndex(0);
+  };
+
+  const nextTour = () => {
+    if (tourIndex < tourSteps.length - 1) {
+      setTourIndex(tourIndex + 1);
+    } else {
+      closeTour();
+    }
+  };
+
+  const prevTour = () => {
+    if (tourIndex > 0) {
+      setTourIndex(tourIndex - 1);
+    }
+  };
+
+  const closeTour = () => {
+    setTourOpen(false);
+    localStorage.setItem(`foTourSeen_${activePage}`, 'true');
+  };
+
+  // Check for first time login tour per page
+  useEffect(() => {
+    const tourSeen = localStorage.getItem(`foTourSeen_${activePage}`);
+    if (!tourSeen && user) {
+      const timer = setTimeout(() => {
+        setShowTourLangModal(true);
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else {
+      setShowTourLangModal(false);
+    }
+  }, [activePage, user]);
 
   // Load user data from localStorage
   useEffect(() => {
@@ -63,8 +278,25 @@ const FieldOfficerDashboard = () => {
     // Initialize socket for real-time updates via shared dataService
     const token = localStorage.getItem('token');
     dataService.initializeSocket(token);
+
+    const loadDepartmentAdmin = async () => {
+      try {
+        setIsDepartmentAdminLoading(true);
+        const data = await dataService.apiCall('/dashboard/field-officer/admin');
+        if (data?.success) {
+          setDepartmentAdmin(data.admin || null);
+        } else {
+          setDepartmentAdmin(null);
+        }
+      } catch (e) {
+        setDepartmentAdmin(null);
+      } finally {
+        setIsDepartmentAdminLoading(false);
+      }
+    };
+    loadDepartmentAdmin();
     
-    const onComplaintUpdate = () => { fetchDashboardData(); };
+    const onComplaintUpdate = () => { fetchDashboardData(true); };
     const onNotificationUpdate = async (payload) => {
       try {
         const token = localStorage.getItem('token');
@@ -75,11 +307,22 @@ const FieldOfficerDashboard = () => {
         if (data.success) setNotifications(data.notifications);
       } catch (e) {}
       playNotifySound();
-      setToast({ title: 'New notification', text: 'You have a new update.' });
-      setTimeout(() => setToast(null), 4000);
+      setNotificationType('info');
+      setNotificationMessage('You have a new update.');
+      setShowNotification(true);
     };
-    const onNewDirectMessage = () => { playNotifySound(); setToast({ title: 'New message', text: 'Admin sent a new message.' }); setTimeout(() => setToast(null), 4000); };
-    const onNewMessage = () => { playNotifySound(); setToast({ title: 'New update', text: 'New complaint message.' }); setTimeout(() => setToast(null), 4000); };
+    const onNewDirectMessage = () => { 
+      playNotifySound(); 
+      setNotificationType('info');
+      setNotificationMessage('Admin sent a new message.');
+      setShowNotification(true);
+    };
+    const onNewMessage = () => { 
+      playNotifySound(); 
+      setNotificationType('info');
+      setNotificationMessage('New complaint message.');
+      setShowNotification(true);
+    };
 
     dataService.subscribe('complaintUpdate', onComplaintUpdate);
     dataService.subscribe('notificationUpdate', onNotificationUpdate);
@@ -94,30 +337,10 @@ const FieldOfficerDashboard = () => {
     };
   }, [navigate]);
 
-  // Handle Chat with Admin
-  const handleChatWithAdmin = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE_URL}/dashboard/field-officer/admin`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await response.json();
-      
-      if (data.success && data.admin) {
-        setChatRecipient(data.admin);
-      } else {
-        alert(data.message || 'Department admin not found');
-      }
-    } catch (error) {
-      console.error('Error fetching admin:', error);
-      alert('Error connecting to admin');
-    }
-  };
-
   // Fetch all dashboard data
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = async (silent = false) => {
     try {
-      setIsLoading(true);
+      if (!silent) setIsLoading(true);
       const token = localStorage.getItem('token');
       // --- UPDATED ENDPOINTS ---
       const [complaintsRes, notificationsRes] = await Promise.all([
@@ -137,9 +360,13 @@ const FieldOfficerDashboard = () => {
 
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
-      alert('Failed to load dashboard data');
+      if (!silent) {
+        setNotificationType('error');
+        setNotificationMessage('Failed to load dashboard data');
+        setShowNotification(true);
+      }
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   };
 
@@ -150,7 +377,9 @@ const FieldOfficerDashboard = () => {
       setShowChatPanel(true);
       setShowComplaintModal(false);
     } catch (e) {
-      alert('Failed to open chat');
+      setNotificationType('error');
+      setNotificationMessage('Failed to open chat');
+      setShowNotification(true);
     }
   };
 
@@ -172,15 +401,21 @@ const FieldOfficerDashboard = () => {
       const data = await response.json();
 
       if (data.success) {
-        alert(`Complaint status updated to ${newStatus}`);
-        fetchDashboardData(); // Refresh data
+        setNotificationType('success');
+        setNotificationMessage(language === 'urdu' ? `شکایت کا سٹیٹس ${newStatus} میں تبدیل کر دیا گیا ہے` : `Complaint status changed to ${newStatus} successfully.`);
+        setShowNotification(true);
+        fetchDashboardData(true);
         setShowComplaintModal(false);
       } else {
-        alert(data.message);
+        setNotificationType('error');
+        setNotificationMessage(data.message);
+        setShowNotification(true);
       }
     } catch (error) {
       console.error('Error updating complaint status:', error);
-      alert('Failed to update complaint status');
+      setNotificationType('error');
+      setNotificationMessage('Failed to update complaint status');
+      setShowNotification(true);
     }
   };
 
@@ -201,15 +436,21 @@ const FieldOfficerDashboard = () => {
       const data = await response.json();
 
       if (data.success) {
-        alert('Evidence uploaded successfully');
+        setNotificationType('success');
+        setNotificationMessage('Evidence uploaded successfully');
+        setShowNotification(true);
         setShowEvidenceModal(false);
-        fetchDashboardData();
+        fetchDashboardData(true);
       } else {
-        alert(data.message);
+        setNotificationType('error');
+        setNotificationMessage(data.message);
+        setShowNotification(true);
       }
     } catch (error) {
       console.error('Error uploading evidence:', error);
-      alert('Failed to upload evidence');
+      setNotificationType('error');
+      setNotificationMessage('Failed to upload evidence');
+      setShowNotification(true);
     }
   };
 
@@ -227,18 +468,26 @@ const FieldOfficerDashboard = () => {
       });
       const data = await response.json();
       if (data.success) {
-        alert('Notes saved successfully!');
+        setNotificationType('success');
+        setNotificationMessage(language === 'urdu' ? 'آپ کے نوٹس کامیابی سے محفوظ کر لیے گئے ہیں۔' : 'Your officer notes have been saved successfully.');
+        setShowNotification(true);
       } else {
-        alert(data.message);
+        setNotificationType('error');
+        setNotificationMessage(data.message);
+        setShowNotification(true);
       }
     } catch (error) {
-      alert('Failed to save notes.');
+      setNotificationType('error');
+      setNotificationMessage('Failed to save notes.');
+      setShowNotification(true);
     }
   };
 
   const handleExportComplaints = async () => {
     if (!complaints.length) {
-      alert('No complaints to export');
+      setNotificationType('info');
+      setNotificationMessage('No complaints to export');
+      setShowNotification(true);
       return;
     }
 
@@ -353,7 +602,9 @@ const FieldOfficerDashboard = () => {
       document.body.removeChild(link);
     } catch (error) {
       console.error('Error exporting Excel:', error);
-      alert('Failed to export Excel file');
+      setNotificationType('error');
+      setNotificationMessage('Failed to export Excel file');
+      setShowNotification(true);
     }
   };
 
@@ -363,40 +614,10 @@ const FieldOfficerDashboard = () => {
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    navigate('/');
-  };
-
-  // Handle notification click
-  const handleNotificationClick = async (notification) => {
-    // Mark as read
-    if (!notification.isRead) {
-      try {
-        await dataService.markNotificationAsRead(notification.id);
-        setNotifications(prev => 
-          prev.map(n => n.id === notification.id ? { ...n, isRead: true } : n)
-        );
-        // Update unread count in dashboard stats if needed
-      } catch (error) {
-        console.error('Error marking notification as read:', error);
-      }
-    }
-
-    // Navigate to related item
-    if (notification.relatedTo === 'complaint' && notification.relatedId) {
-      try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`${dataService.apiBaseUrl}/complaints/${notification.relatedId}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.success) {
-          setSelectedComplaint(data.complaint);
-          setShowComplaintModal(true);
-        }
-      } catch (error) {
-        console.error('Error fetching related complaint:', error);
-      }
-    }
+    try {
+      if (dataService?.socket) dataService.socket.disconnect();
+    } catch (_) {}
+    navigate('/role-selection', { replace: true });
   };
 
   // Filter complaints based on filters
@@ -417,8 +638,8 @@ const FieldOfficerDashboard = () => {
   const dashboardStats = {
     total: complaints.length,
     pending: complaints.filter(c => c.status === 'pending').length,
-    progress: complaints.filter(c => c.status === 'progress').length,
-    resolved: complaints.filter(c => c.status === 'resolved').length
+    progress: complaints.filter(c => c.status === 'progress' || c.status === 'in-progress').length,
+    resolved: complaints.filter(c => c.status === 'resolved' || c.status === 'completed').length
   };
 
   if (isLoading) {
@@ -436,17 +657,12 @@ const FieldOfficerDashboard = () => {
 
   return (
     <div className="dashboard-container">
-      {toast && (
-        <div className="toast-notify slide-in">
-          <div className="toast-title">{toast.title}</div>
-          <div className="toast-text">{toast.text}</div>
-        </div>
-      )}
       {/* Sidebar */}
       <div className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
           <div className="header-top">
             <div className="app-branding">
+              <img className="app-logo" src={BRAND_LOGO_URL} alt={t('appTitle')} />
               <h2>{t('appTitle')}</h2>
               <p>{t('fieldOfficerDashboard')}</p>
             </div>
@@ -462,11 +678,12 @@ const FieldOfficerDashboard = () => {
         
         
 
-        <div className="sidebar-menu">
+        <div className="sidebar-menu" ref={sidebarMenuRef}>
           {[
             { id: 'dashboard', icon: 'fa-home', label: t('dashboard') },
             { id: 'assigned-complaints', icon: 'fa-tasks', label: t('assignedComplaints') },
             { id: 'notifications', icon: 'fa-bell', label: t('notifications') },
+            { id: 'admin-chat', icon: 'fa-comments', label: t('adminChat') },
             { id: 'performance', icon: 'fa-chart-line', label: t('performance') },
             { id: 'profile', icon: 'fa-user', label: t('profile') },
             { id: 'settings', icon: 'fa-cog', label: t('settings') }
@@ -511,7 +728,7 @@ const FieldOfficerDashboard = () => {
               <p>Field Officer - {user?.department || 'Department'}</p>
             </div>
           </div>
-          <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }} ref={headerActionsRef}>
             <button className="btn btn-outline" onClick={toggleLanguage}>
               {language === 'english' ? 'اردو' : 'English'}
             </button>
@@ -535,7 +752,7 @@ const FieldOfficerDashboard = () => {
           <div className="page-content active">
             <h2 className="modal-title">Field Officer Dashboard</h2>
             
-            <div className="dashboard-cards">
+            <div className="dashboard-cards" ref={dashboardCardsRef}>
               <DashboardCard 
                 value={dashboardStats.total}
                 title={t('totalAssigned')}
@@ -584,28 +801,76 @@ const FieldOfficerDashboard = () => {
 
         {/* Other pages */}
         {activePage === 'assigned-complaints' && (
-          <AssignedComplaintsPage 
-            complaints={filteredComplaints}
-            filters={filters}
-            onFilterChange={setFilters}
-            onViewDetails={(complaint) => {
-              setSelectedComplaint(complaint);
-              setShowComplaintModal(true);
-            }}
-            onOpenChat={openChat}
-          />
+          <div ref={assignedListRef}>
+            <AssignedComplaintsPage 
+              complaints={filteredComplaints}
+              filters={filters}
+              onFilterChange={setFilters}
+              onViewDetails={(complaint) => {
+                setSelectedComplaint(complaint);
+                setShowComplaintModal(true);
+              }}
+              onOpenChat={openChat}
+            />
+          </div>
         )}
 
         {activePage === 'notifications' && (
-          <NotificationsPage notifications={notifications} />
+          <div ref={notificationListRef}>
+            <NotificationsPage notifications={notifications} />
+          </div>
+        )}
+
+        {activePage === 'admin-chat' && (
+          <div className="page-content active">
+            <h2 className="modal-title">{t('adminChat')}</h2>
+            <div className="admin-chat-card">
+              {isDepartmentAdminLoading ? (
+                <div className="admin-chat-loading">{t('loading')}</div>
+              ) : !departmentAdmin ? (
+                <div className="admin-chat-empty">
+                  <div className="admin-chat-empty-title">{t('noDepartmentAdminFound')}</div>
+                  <div className="admin-chat-empty-sub">{t('contactSupportOrTryLater')}</div>
+                </div>
+              ) : (
+                <>
+                  <div className="admin-chat-header">
+                    <div className="admin-chat-avatar">
+                      {departmentAdmin?.fullName?.charAt(0) || 'A'}
+                    </div>
+                    <div className="admin-chat-meta">
+                      <div className="admin-chat-name">{departmentAdmin.fullName}</div>
+                      <div className="admin-chat-subtitle">{departmentAdmin.email}</div>
+                      <div className="admin-chat-dept">{departmentAdmin.department}</div>
+                    </div>
+                  </div>
+                  <div className="admin-chat-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => setShowAdminChatModal(true)}
+                    >
+                      <i className="fas fa-paper-plane"></i> {t('chatWithAdmin')}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         )}
 
         {activePage === 'performance' && (
-          <PerformancePage performance={performance} />
+          <div ref={performanceChartsRef}>
+            <PerformancePage performance={performance} />
+          </div>
         )}
 
-        {activePage === 'profile' && <ProfilePage user={user} />}
-        {activePage === 'settings' && <SettingsPage />}
+        {activePage === 'profile' && (
+          <div ref={profileSectionRef}>
+            <ProfilePage user={user} setNotificationType={setNotificationType} setNotificationMessage={setNotificationMessage} setShowNotification={setShowNotification} />
+          </div>
+        )}
+        {activePage === 'settings' && <SettingsPage setNotificationType={setNotificationType} setNotificationMessage={setNotificationMessage} setShowNotification={setShowNotification} />}
       </div>
 
       {/* Complaint Details Modal */}
@@ -621,6 +886,9 @@ const FieldOfficerDashboard = () => {
           onOpenChat={openChat}
           t={t}
           saveOfficerNotes={saveOfficerNotes}
+          setNotificationType={setNotificationType}
+          setNotificationMessage={setNotificationMessage}
+          setShowNotification={setShowNotification}
         />
       )}
 
@@ -642,6 +910,14 @@ const FieldOfficerDashboard = () => {
         />
       )}
 
+      {showAdminChatModal && departmentAdmin && user && (
+        <DirectChatModal
+          recipient={departmentAdmin}
+          currentUser={user}
+          onClose={() => setShowAdminChatModal(false)}
+        />
+      )}
+
       {/* Calendar Modal */}
       {showCalendarModal && (
         <CalendarModal
@@ -653,6 +929,114 @@ const FieldOfficerDashboard = () => {
             setShowComplaintModal(true);
           }}
         />
+      )}
+
+      {/* Tour Language Selection Modal */}
+      {showTourLangModal && (
+        <div className="tour-modal-overlay">
+          <div className="tour-modal">
+            <div className="tour-modal-icon">
+              <i className="fas fa-map-signs"></i>
+            </div>
+            <h2>Quick Guide</h2>
+            <p>Welcome to your Field Officer dashboard! Would you like a quick professional tour to help you manage your assignments? Choose your language below.</p>
+            <div className="lang-options">
+              <button type="button" className="lang-btn" onClick={() => startTour('english')}>
+                <i className="fas fa-globe-americas"></i>
+                <span>English</span>
+                <span>International</span>
+              </button>
+              <button type="button" className="lang-btn" onClick={() => startTour('urdu')}>
+                <i className="fas fa-language"></i>
+                <span>اردو</span>
+                <span>مقامی زبان</span>
+              </button>
+            </div>
+            <button type="button" className="tour-skip-link" onClick={() => {
+              setShowTourLangModal(false);
+              localStorage.setItem(`foTourSeen_${activePage}`, 'true');
+            }}>
+              Skip tour for now
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Guided Tour Overlay */}
+      {tourOpen && (
+        <div className="tour-overlay">
+          <div className="tour-dim" onClick={closeTour} />
+          {tourRect && (
+            <div 
+              className="tour-highlight"
+              style={{
+                top: `${tourRect.top}px`,
+                left: `${tourRect.left}px`,
+                width: `${tourRect.width}px`,
+                height: `${tourRect.height}px`
+              }}
+            />
+          )}
+          <div 
+            className="tour-tooltip"
+            style={{ 
+              top: `${tourTooltipPos.top}px`, 
+              left: `${tourTooltipPos.left}px`
+            }}
+          >
+            <div className="tour-step-indicator">
+              Step {tourIndex + 1} of {tourSteps.length}
+            </div>
+            <div className="tour-title">{tourSteps[tourIndex]?.title}</div>
+            <div className="tour-body">{tourSteps[tourIndex]?.body}</div>
+            <div className="tour-actions">
+              <button className="tour-btn ghost" onClick={closeTour}>
+                {language === 'urdu' ? 'چھوڑیں' : 'Skip'}
+              </button>
+              <div className="tour-actions-right">
+                <button 
+                  className="tour-btn ghost" 
+                  onClick={prevTour}
+                  disabled={tourIndex === 0}
+                >
+                  {language === 'urdu' ? 'پیچھے' : 'Back'}
+                </button>
+                <button className="tour-btn primary" onClick={nextTour}>
+                  {tourIndex === tourSteps.length - 1 
+                    ? (language === 'urdu' ? 'ختم کریں' : 'Finish') 
+                    : (language === 'urdu' ? 'اگلا' : 'Next')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Notification Popup (Center Modal) */}
+      {showNotification && (
+        <div className="notification-popup-overlay">
+          <div className={`notification-popup active ${notificationType}`}>
+            <div className={`notification-icon ${notificationType}`}>
+              <i className={`fas ${
+                notificationType === 'success' ? 'fa-check-circle' : 
+                notificationType === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'
+              }`}></i>
+            </div>
+            <div className="notification-content">
+              <h3 className="notification-title">
+                {notificationType === 'success' ? (t('success') || 'Success') : 
+                 notificationType === 'error' ? (t('error') || 'Error') : (t('info') || 'Info')}
+              </h3>
+              <div className="notification-message">{notificationMessage}</div>
+            </div>
+            <button 
+              className={`notification-close-btn ${notificationType}`}
+              onClick={() => setShowNotification(false)}
+            >
+              {t('close') || 'Close'}
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Direct Chat Disabled */}
@@ -1051,7 +1435,7 @@ const PerformancePage = ({ performance }) => {
 };
 
 // Profile Page Component
-const ProfilePage = ({ user }) => {
+const ProfilePage = ({ user, setNotificationType, setNotificationMessage, setShowNotification }) => {
   const { t } = useLanguage();
   const [isLoading, setIsLoading] = useState(false);
   const [profileData, setProfileData] = useState({
@@ -1076,7 +1460,9 @@ const ProfilePage = ({ user }) => {
     // Simulate API call
     setTimeout(() => {
       setIsLoading(false);
-      alert(t('profileUpdatedSuccess') || 'Profile updated successfully!');
+      setNotificationType('success');
+      setNotificationMessage(t('profileUpdatedSuccess') || 'Profile updated successfully!');
+      setShowNotification(true);
     }, 1000);
   };
 
@@ -1132,7 +1518,7 @@ const ProfilePage = ({ user }) => {
 };
 
 // Settings Page Component
-const SettingsPage = () => {
+const SettingsPage = ({ setNotificationType, setNotificationMessage, setShowNotification }) => {
   const { t } = useLanguage();
   const [settings, setSettings] = useState({
     notifications: true,
@@ -1150,8 +1536,16 @@ const SettingsPage = () => {
   }, []);
 
   const handleSettingsSave = () => {
-    localStorage.setItem('foSettings', JSON.stringify(settings));
-    alert(t('settingsSaved') || 'Settings saved successfully!');
+    try {
+      localStorage.setItem('foSettings', JSON.stringify(settings));
+      setNotificationType('success');
+      setNotificationMessage(t('settingsSaved') || 'Settings saved successfully!');
+      setShowNotification(true);
+    } catch (error) {
+      setNotificationType('error');
+      setNotificationMessage('Failed to save settings.');
+      setShowNotification(true);
+    }
   };
 
   return (
@@ -1189,15 +1583,15 @@ const SettingsPage = () => {
 };
 
 // Complaint Details Modal Component
-const ComplaintDetailsModal = ({ complaint, onClose, onStatusUpdate, onUploadEvidence, onOpenChat }) => {
+const ComplaintDetailsModal = ({ complaint, onClose, onStatusUpdate, onUploadEvidence, onOpenChat, setNotificationType, setNotificationMessage, setShowNotification }) => {
   const [notes, setNotes] = useState('');
-  const [foTemplate, setFoTemplate] = useState('');
-  const [foNotes, setFoNotes] = useState('');
 
   const handleSaveNotes = () => {
     // Save notes to localStorage or backend
     localStorage.setItem(`notes_${complaint.id}`, notes);
-    alert('Notes saved successfully!');
+    setNotificationType('success');
+    setNotificationMessage('Notes saved successfully!');
+    setShowNotification(true);
   };
 
   return (
@@ -1348,7 +1742,9 @@ const ComplaintDetailsModal = ({ complaint, onClose, onStatusUpdate, onUploadEvi
               onClick={async () => {
                 try {
                   if (!navigator.geolocation) {
-                    alert('Geolocation not supported');
+                    setNotificationType('error');
+                    setNotificationMessage('Geolocation not supported');
+                    setShowNotification(true);
                     return;
                   }
                   navigator.geolocation.getCurrentPosition(async (pos) => {
@@ -1361,10 +1757,18 @@ const ComplaintDetailsModal = ({ complaint, onClose, onStatusUpdate, onUploadEvi
                       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
                       body: JSON.stringify(payload)
                     });
-                    alert('Check-in recorded');
-                  }, () => alert('Unable to get location'), { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+                    setNotificationType('success');
+                    setNotificationMessage('Check-in recorded');
+                    setShowNotification(true);
+                  }, () => {
+                    setNotificationType('error');
+                    setNotificationMessage('Unable to get location');
+                    setShowNotification(true);
+                  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
                 } catch (e) {
-                  alert('Failed to check in');
+                  setNotificationType('error');
+                  setNotificationMessage('Failed to check in');
+                  setShowNotification(true);
                 }
               }}
               style={{ marginLeft: '8px' }}
@@ -1471,19 +1875,3 @@ const EvidenceUploadModal = ({ complaint, onClose, onUpload }) => {
 };
 
 export default FieldOfficerDashboard;
-  const playNotifySound = () => {
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'sine';
-      o.frequency.setValueAtTime(880, ctx.currentTime);
-      g.gain.setValueAtTime(0.001, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
-      o.connect(g);
-      g.connect(ctx.destination);
-      o.start();
-      o.stop(ctx.currentTime + 0.45);
-    } catch (_) {}
-  };

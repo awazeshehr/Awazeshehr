@@ -47,6 +47,20 @@
   perspective: 1000px;
 }
 
+.splash-logo {
+  width: 96px;
+  height: 96px;
+  border-radius: 26px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+  margin: 0 auto 18px;
+  display: block;
+  opacity: 0;
+  transform: translateY(30px);
+  animation: fadeInUp 1.2s ease forwards 0.2s;
+}
+
 .logo-main {
   font-size: 5rem;
   font-weight: 800;
@@ -142,7 +156,7 @@
 }
 
 /* New informative sections */
-.info-cards {
+.splash-info-cards {
   display: flex;
   justify-content: center;
   flex-wrap: wrap;
@@ -152,37 +166,38 @@
   animation: fadeIn 1s ease forwards 3s;
 }
 
-.info-card {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
+.splash-info-card {
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
   border-radius: 15px;
   padding: 20px;
   width: 180px;
   text-align: center;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   transform: translateY(30px);
   opacity: 0;
   animation: cardAppear 0.8s ease forwards;
 }
 
-.info-card:nth-child(1) { animation-delay: 3.2s; }
-.info-card:nth-child(2) { animation-delay: 3.4s; }
-.info-card:nth-child(3) { animation-delay: 3.6s; }
-.info-card:nth-child(4) { animation-delay: 3.8s; }
+.splash-info-card:nth-child(1) { animation-delay: 3.2s; }
+.splash-info-card:nth-child(2) { animation-delay: 3.4s; }
+.splash-info-card:nth-child(3) { animation-delay: 3.6s; }
+.splash-info-card:nth-child(4) { animation-delay: 3.8s; }
 
-.info-card i {
+.splash-info-card i {
   font-size: 2.5rem;
   margin-bottom: 15px;
   color: var(--accent);
 }
 
-.info-card h3 {
+.splash-info-card h3 {
   font-size: 1rem;
   margin-bottom: 8px;
   font-weight: 600;
 }
 
-.info-card p {
+.splash-info-card p {
   font-size: 0.8rem;
   opacity: 0.9;
 }
@@ -352,10 +367,10 @@
   .progress-container {
     width: 250px;
   }
-  .info-cards {
+  .splash-info-cards {
     gap: 15px;
   }
-  .info-card {
+  .splash-info-card {
     width: 150px;
     padding: 15px;
   }
@@ -381,11 +396,11 @@
   .progress-container {
     width: 200px;
   }
-  .info-cards {
+  .splash-info-cards {
     flex-direction: column;
     align-items: center;
   }
-  .info-card {
+  .splash-info-card {
     width: 100%;
     max-width: 250px;
   }

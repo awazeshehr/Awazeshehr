@@ -1,5 +1,7 @@
 // Shared data service for all dashboards
 
+import { io } from 'socket.io-client';
+
 class DataService {
   constructor() {
     this.socket = null;
@@ -22,6 +24,11 @@ class DataService {
   }
 
   normalizeApiBaseUrl(rawBaseUrl) {
+    // If we're on Vercel, use relative paths to trigger vercel.json rewrites
+    if (typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || window.location.hostname === 'localhost')) {
+      return '/api';
+    }
+    
     if (!rawBaseUrl) return '/api';
     const base = String(rawBaseUrl).trim().replace(/\/+$/, '');
     if (!base) return '/api';
@@ -34,9 +41,17 @@ class DataService {
     if (this.socket) {
       this.socket.disconnect();
     }
+    
+    // Determine socket base URL
+    let socketBase;
+    if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+      // Direct connection to Render for sockets because Vercel rewrites don't support WebSockets well
+      socketBase = 'https://backend-ui1u.onrender.com';
+    } else {
+      socketBase = this.apiBaseUrl.replace(/\/api\/?$/, '');
+      if (socketBase === '') socketBase = window.location.origin;
+    }
 
-    const { io } = require('socket.io-client');
-    const socketBase = this.apiBaseUrl.replace(/\/api\/?$/, '');
     this.socket = io(socketBase, {
       auth: { token: `Bearer ${token}` }
     });

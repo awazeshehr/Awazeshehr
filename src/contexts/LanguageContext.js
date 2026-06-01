@@ -19,8 +19,31 @@ export const LanguageProvider = ({ children }) => {
     localStorage.setItem('language', newLanguage);
   };
 
+  const humanizeKey = (rawKey) => {
+    const key = String(rawKey || '').trim();
+    if (!key) return '';
+    const spaced = key
+      .replace(/[_-]+/g, ' ')
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const parts = spaced.split(' ').filter(Boolean);
+    const acronyms = new Set(['id', 'cnic', 'otp', 'gps', 'sla', 'api', 'url', 'ai']);
+    return parts
+      .map((p) => {
+        const lower = p.toLowerCase();
+        if (acronyms.has(lower)) return lower.toUpperCase();
+        if (p.length <= 2 && lower === p) return p.toUpperCase();
+        return p.charAt(0).toUpperCase() + p.slice(1);
+      })
+      .join(' ');
+  };
+
   const t = (key) => {
-    return translations[language][key] || key;
+    const dict = translations?.[language] || {};
+    const val = dict?.[key];
+    if (val) return val;
+    return humanizeKey(key);
   };
 
   return (

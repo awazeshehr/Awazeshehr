@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, 
@@ -21,15 +21,17 @@ const SuperAdminDashboard = () => {
   const [users, setUsers] = useState({ admins: [], officers: [], citizens: [] });
   const [trends, setTrends] = useState([]);
   const [perf, setPerf] = useState([]);
-  const [filters, setFilters] = useState({ status: '', department: '' });
+  const [reportPreset, setReportPreset] = useState('weekly');
+  const [reportFrom, setReportFrom] = useState('');
+  const [reportTo, setReportTo] = useState('');
+  const [reportDepartmentId, setReportDepartmentId] = useState('');
+  const [filters] = useState({ status: '', department: '' });
   const [saCreateStatus, setSaCreateStatus] = useState('');
   const [saCreateError, setSaCreateError] = useState('');
   const [creating, setCreating] = useState(false);
   const [activePage, setActivePage] = useState('overview');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [user, setUser] = useState(null);
-  const [isMobile, setIsMobile] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const [mapSearchQuery, setMapSearchQuery] = useState('');
@@ -68,13 +70,17 @@ const SuperAdminDashboard = () => {
   const [editDepLocationValidating, setEditDepLocationValidating] = useState(false);
   const [coverageNormalizationRan, setCoverageNormalizationRan] = useState(false);
   const [hierarchyTab, setHierarchyTab] = useState('urban');
+  const [hierarchySearch, setHierarchySearch] = useState('');
   const [departmentSearch, setDepartmentSearch] = useState('');
   const [routingSearch, setRoutingSearch] = useState('');
   const [complaintsFilterMode, setComplaintsFilterMode] = useState('urban');
   const [filterUrbanSector, setFilterUrbanSector] = useState('');
   const [filterRuralJurisdiction, setFilterRuralJurisdiction] = useState('');
   const [filterDepartmentId, setFilterDepartmentId] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterPriority, setFilterPriority] = useState('');
   const [complaintSearch, setComplaintSearch] = useState('');
+  const [complaintsGroupSearch, setComplaintsGroupSearch] = useState('');
   const [rerouteRequests, setRerouteRequests] = useState([]);
   const [rerouteApproveTarget, setRerouteApproveTarget] = useState({});
   const [routingSim, setRoutingSim] = useState({ category: '', areaType: 'Urban', sector: '', ruralJurisdiction: '', service: '', priority: 'medium', text: '' });
@@ -84,6 +90,50 @@ const SuperAdminDashboard = () => {
     setModalMessage(message);
     setModalOpen(true);
   };
+
+  const toDateInputValue = (d) => {
+    const date = d instanceof Date ? d : new Date(d);
+    if (Number.isNaN(date.getTime())) return '';
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const startOfDay = (d) => {
+    const date = d instanceof Date ? new Date(d) : new Date(d);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  };
+
+  const endOfDay = (d) => {
+    const date = d instanceof Date ? new Date(d) : new Date(d);
+    date.setHours(23, 59, 59, 999);
+    return date;
+  };
+
+  const getPresetRange = useCallback((preset) => {
+    const now = new Date();
+    const today = startOfDay(now);
+    if (preset === 'daily') {
+      return { from: toDateInputValue(today), to: toDateInputValue(today) };
+    }
+    if (preset === 'monthly') {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1);
+      const last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      return { from: toDateInputValue(first), to: toDateInputValue(last) };
+    }
+    const from = new Date(today);
+    from.setDate(from.getDate() - 6);
+    return { from: toDateInputValue(from), to: toDateInputValue(today) };
+  }, []);
+
+  useEffect(() => {
+    if (reportFrom && reportTo) return;
+    const r = getPresetRange(reportPreset);
+    setReportFrom(r.from);
+    setReportTo(r.to);
+  }, [getPresetRange, reportFrom, reportTo, reportPreset]);
 
   const normalizeKey = (v) => String(v || '').trim().toLowerCase();
   const parseTimeToMinutes = (timeStr) => {
@@ -98,7 +148,7 @@ const SuperAdminDashboard = () => {
     return h * 60 + m;
   };
 
-  const depCovers = (dep, areaType, sector, ruralJurisdiction) => {
+  const depCovers = useCallback((dep, areaType, sector, ruralJurisdiction) => {
     const types = Array.isArray(dep?.areaTypes) ? dep.areaTypes : [];
     if (!types.includes(areaType)) return false;
     if (areaType === 'Urban') {
@@ -109,14 +159,14 @@ const SuperAdminDashboard = () => {
     const r = String(ruralJurisdiction || '').trim();
     if (!r) return true;
     return Array.isArray(dep?.ruralJurisdictions) && dep.ruralJurisdictions.some(x => normalizeKey(x) === normalizeKey(r));
-  };
+  }, []);
 
-  const depOffersService = (dep, service) => {
+  const depOffersService = useCallback((dep, service) => {
     const s = String(service || '').trim();
     if (!s) return true;
     const list = Array.isArray(dep?.servicesOffered) ? dep.servicesOffered : [];
     return list.some(x => normalizeKey(x) === normalizeKey(s));
-  };
+  }, []);
 
   const serviceOptions = React.useMemo(() => {
     const set = new Set();
@@ -146,8 +196,8 @@ const SuperAdminDashboard = () => {
   const isCoverageReady = (dep) => {
     const types = Array.isArray(dep?.areaTypes) ? dep.areaTypes : [];
     if (types.length === 0) return false;
-    if (types.includes('Urban') && (!Array.isArray(dep?.sectors) || dep.sectors.length === 0)) return false;
-    if (types.includes('Rural') && (!Array.isArray(dep?.ruralJurisdictions) || dep.ruralJurisdictions.length === 0)) return false;
+    if (types.includes('Urban') && ((!Array.isArray(dep?.sectors)) || dep.sectors.length === 0)) return false;
+    if (types.includes('Rural') && ((!Array.isArray(dep?.ruralJurisdictions)) || dep.ruralJurisdictions.length === 0)) return false;
     return true;
   };
 
@@ -293,7 +343,7 @@ const SuperAdminDashboard = () => {
     }
 
     return { ok: true, selection: null, message: 'No active department covers this area/service', reason: { type: 'none' }, candidates: [] };
-  }, [routingSim, deps, routingPolicies, categoryMappings, complaints]);
+  }, [routingSim, deps, routingPolicies, categoryMappings, complaints, depCovers, depOffersService]);
 
   const routingDiagnostics = React.useMemo(() => {
     const activeDeps = (deps || []).filter(d => d && d.isActive !== false);
@@ -355,14 +405,14 @@ const SuperAdminDashboard = () => {
       .filter(Boolean);
 
     return {
+      invalidPolicies,
+      invalidMappings,
       urbanGaps,
       ruralGaps,
       urbanOverlaps,
-      ruralOverlaps,
-      invalidPolicies,
-      invalidMappings
+      ruralOverlaps
     };
-  }, [deps, routingPolicies, categoryMappings, urbanSectors, ruralJurisdictions]);
+  }, [deps, routingPolicies, categoryMappings, urbanSectors, ruralJurisdictions, depCovers]);
 
   const validateIslamabadAddress = async (rawAddress, dep) => {
     const address = String(rawAddress || '').trim();
@@ -419,6 +469,88 @@ const SuperAdminDashboard = () => {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [categoryMappings]);
 
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    navigate('/role-selection');
+  }, [navigate]);
+
+  const loadHierarchy = useCallback(async () => {
+    try {
+      // Load Urban Sectors
+      const urban = await dataService.saListUrbanSectors();
+      setUrbanSectors(urban.sectors || []);
+      
+      // Load Rural Jurisdictions
+      const rural = await dataService.saListRuralJurisdictions();
+      setRuralJurisdictions(rural.jurisdictions || []);
+      
+      const policies = await dataService.saListRoutingPolicies();
+      setRoutingPolicies(policies.policies || []);
+
+      const mappings = await dataService.saListCategoryMappings();
+      setCategoryMappings(mappings.mappings || []);
+
+      const rr = await dataService.saListRerouteRequests();
+      setRerouteRequests(rr.requests || []);
+    } catch (e) {
+      console.error('Hierarchy load error:', e);
+    }
+  }, []);
+
+  const loadPolicies = useCallback(async () => {
+    try {
+      const p = await dataService.saGetPolicies();
+      setPolicies(p.policy || {});
+    } catch (e) {}
+  }, []);
+
+  const refreshDeps = useCallback(async () => {
+    try {
+      const res = await dataService.saListDepartments();
+      setDeps(res.departments || []);
+    } catch (error) {
+      console.error('Refresh deps error:', error);
+      if (error.message === 'Token is not valid' || error.message.includes('authorization denied')) handleLogout();
+    }
+  }, [handleLogout]);
+
+  const refreshComplaints = useCallback(async () => {
+    try {
+      const res = await dataService.saGetAllComplaints(filters);
+      setComplaints(res.complaints || []);
+    } catch (error) {
+      console.error('Refresh complaints error:', error);
+      if (error.message === 'Token is not valid' || error.message.includes('authorization denied')) handleLogout();
+    }
+  }, [filters, handleLogout]);
+
+  const loadAnalytics = useCallback(async () => {
+    try {
+      const tTrend = await dataService.saComplaintTrends('daily');
+      setTrends(tTrend.series || []);
+      const p = await dataService.saDepartmentPerformance();
+      setPerf(p.performance || []);
+    } catch (error) {
+      console.error('Load analytics error:', error);
+      if (error.message === 'Token is not valid' || error.message.includes('authorization denied')) handleLogout();
+    }
+  }, [handleLogout]);
+
+  const loadUsers = useCallback(async () => {
+    try {
+      const admins = await dataService.saListUsers('dept-admin');
+      const officers = await dataService.saListUsers('field-officer');
+      const citizens = await dataService.saListUsers('citizen');
+      setUsers({ admins: admins.users || [], officers: officers.users || [], citizens: citizens.users || [] });
+    } catch (error) {
+      console.error('Load users error:', error);
+      if (error.message === 'Token is not valid' || error.message.includes('authorization denied')) {
+        handleLogout();
+      }
+    }
+  }, [handleLogout]);
+
   useEffect(() => {
     if (routingSim.category) return;
     if (!Array.isArray(categorySuggestions) || categorySuggestions.length === 0) return;
@@ -428,6 +560,211 @@ const SuperAdminDashboard = () => {
   const urbanSectorNames = React.useMemo(() => {
     return (urbanSectors || []).map(s => s?.name).filter(Boolean);
   }, [urbanSectors]);
+
+  const eligibleAdminDepartments = React.useMemo(() => {
+    return (deps || []).filter(dep => {
+      if (!dep) return false;
+      if (dep.areaTypes && dep.areaTypes.length > 0) {
+        if (!dep.areaTypes.includes(newUser.areaType)) return false;
+      } else if (dep.areaType && dep.areaType !== newUser.areaType) {
+        return false;
+      }
+      if (newUser.areaType === 'Urban' && newUser.sector) {
+        if (Array.isArray(dep.sectors) && dep.sectors.length > 0 && !dep.sectors.includes(newUser.sector)) return false;
+      }
+      if (newUser.areaType === 'Rural' && newUser.ruralJurisdiction) {
+        if (Array.isArray(dep.ruralJurisdictions) && dep.ruralJurisdictions.length > 0 && !dep.ruralJurisdictions.includes(newUser.ruralJurisdiction)) return false;
+      }
+      return true;
+    });
+  }, [deps, newUser.areaType, newUser.sector, newUser.ruralJurisdiction]);
+
+  const selectedAdminDepartment = React.useMemo(() => {
+    if (!newUser.departmentId) return null;
+    return (deps || []).find(d => String(d._id) === String(newUser.departmentId)) || null;
+  }, [deps, newUser.departmentId]);
+
+  const reportRange = React.useMemo(() => {
+    const from = reportFrom ? startOfDay(new Date(reportFrom)) : null;
+    const to = reportTo ? endOfDay(new Date(reportTo)) : null;
+    return { from, to };
+  }, [reportFrom, reportTo]);
+
+  const reportComplaints = React.useMemo(() => {
+    const { from, to } = reportRange;
+    return (complaints || []).filter(c => {
+      const created = new Date(c?.createdAt || c?.updatedAt || '');
+      if (Number.isNaN(created.getTime())) return false;
+      if (from && created < from) return false;
+      if (to && created > to) return false;
+      if (reportDepartmentId) {
+        if (String(c?.departmentId || '') === String(reportDepartmentId)) return true;
+        const depName = deps.find(d => String(d._id) === String(reportDepartmentId))?.name || '';
+        if (depName && String(c?.department || '') === depName) return true;
+        return false;
+      }
+      return true;
+    });
+  }, [complaints, deps, reportDepartmentId, reportRange]);
+
+  const reportSummary = React.useMemo(() => {
+    const list = reportComplaints || [];
+    const byStatus = {};
+    const byCategory = {};
+    const byDepartment = {};
+    const bySector = {};
+    const byJurisdiction = {};
+
+    const push = (bucket, key) => {
+      const k = String(key || 'Unknown').trim() || 'Unknown';
+      bucket[k] = (bucket[k] || 0) + 1;
+    };
+
+    list.forEach(c => {
+      push(byStatus, c?.status || 'unknown');
+      push(byCategory, c?.category || 'unknown');
+      const depName = c?.department || deps.find(d => String(d._id) === String(c?.departmentId))?.name || 'unknown';
+      push(byDepartment, depName);
+      if (c?.location?.areaType === 'Urban') push(bySector, c?.location?.sector || 'Unknown Sector');
+      if (c?.location?.areaType === 'Rural') push(byJurisdiction, c?.location?.ruralJurisdiction || 'Unknown Jurisdiction');
+    });
+
+    const toTop = (obj, limit = 10) =>
+      Object.entries(obj)
+        .map(([k, v]) => ({ key: k, count: v }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, limit);
+
+    return {
+      total: list.length,
+      byStatus,
+      topCategories: toTop(byCategory, 10),
+      topDepartments: toTop(byDepartment, 10),
+      topSectors: toTop(bySector, 10),
+      topJurisdictions: toTop(byJurisdiction, 10)
+    };
+  }, [deps, reportComplaints]);
+
+  const generateReportPdf = useCallback(() => {
+    const rangeText = `${reportFrom || '—'} → ${reportTo || '—'}`;
+    const depName = reportDepartmentId
+      ? (deps.find(d => String(d._id) === String(reportDepartmentId))?.name || '—')
+      : (t('allDepartments') || 'All Departments');
+
+    const rowHtml = (items) =>
+      (items || [])
+        .map(x => `<tr><td>${String(x.key)}</td><td style="text-align:right;font-weight:800">${Number(x.count || 0)}</td></tr>`)
+        .join('');
+
+    const statusRows = Object.entries(reportSummary.byStatus || {})
+      .map(([k, v]) => ({ key: k, count: v }))
+      .sort((a, b) => b.count - a.count);
+
+    const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>${t('report') || 'Report'}</title>
+  <style>
+    body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; color:#0f172a; margin:0; background:#fff;}
+    .page{padding:28px 34px;}
+    .header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:14px; border-bottom:1px solid #e2e8f0;}
+    .brand{display:flex; align-items:center; gap:12px;}
+    .logo{width:42px;height:42px;border-radius:12px;object-fit:cover;border:1px solid rgba(15,23,42,0.12);}
+    h1{font-size:18px;margin:0;font-weight:900;letter-spacing:-0.01em;}
+    .meta{font-size:12px;color:#475569; text-align:right;}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:16px;}
+    .card{border:1px solid #e2e8f0;border-radius:16px;padding:14px;}
+    .card h2{font-size:12px; margin:0 0 10px 0; color:#64748b; text-transform:uppercase; letter-spacing:0.08em;}
+    .kpi{display:flex;align-items:baseline;justify-content:space-between;}
+    .kpi .v{font-size:26px;font-weight:900;}
+    table{width:100%; border-collapse:collapse;}
+    th,td{padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:12px;}
+    th{color:#64748b;text-transform:uppercase;letter-spacing:0.08em;font-size:11px;text-align:left;}
+    .footer{margin-top:18px; font-size:11px; color:#94a3b8;}
+    @media print{.page{padding:0.6in;} .card{break-inside:avoid;} }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div class="brand">
+        <img class="logo" src="${process.env.PUBLIC_URL}/awazeshehr.jpeg" alt="Logo"/>
+        <div>
+          <h1>${t('superAdminReport') || 'Super Admin Report'}</h1>
+          <div class="meta">${t('dateRange') || 'Date Range'}: ${rangeText} • ${t('department') || 'Department'}: ${depName}</div>
+        </div>
+      </div>
+      <div class="meta">${new Date().toLocaleString()}</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>${t('summary') || 'Summary'}</h2>
+        <div class="kpi"><div>${t('totalComplaints') || 'Total Complaints'}</div><div class="v">${reportSummary.total}</div></div>
+      </div>
+      <div class="card">
+        <h2>${t('status') || 'Status'}</h2>
+        <table>
+          <thead><tr><th>${t('status') || 'Status'}</th><th style="text-align:right">${t('count') || 'Count'}</th></tr></thead>
+          <tbody>${rowHtml(statusRows)}</tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>${t('topCategories') || 'Top Categories'}</h2>
+        <table>
+          <thead><tr><th>${t('category') || 'Category'}</th><th style="text-align:right">${t('count') || 'Count'}</th></tr></thead>
+          <tbody>${rowHtml(reportSummary.topCategories)}</tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>${t('topDepartments') || 'Top Departments'}</h2>
+        <table>
+          <thead><tr><th>${t('department') || 'Department'}</th><th style="text-align:right">${t('count') || 'Count'}</th></tr></thead>
+          <tbody>${rowHtml(reportSummary.topDepartments)}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:14px;">
+      <div class="card">
+        <h2>${t('topSectors') || 'Top Sectors'}</h2>
+        <table>
+          <thead><tr><th>${t('sector') || 'Sector'}</th><th style="text-align:right">${t('count') || 'Count'}</th></tr></thead>
+          <tbody>${rowHtml(reportSummary.topSectors)}</tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>${t('topJurisdictions') || 'Top Jurisdictions'}</h2>
+        <table>
+          <thead><tr><th>${t('ruralJurisdiction') || 'Rural Jurisdiction'}</th><th style="text-align:right">${t('count') || 'Count'}</th></tr></thead>
+          <tbody>${rowHtml(reportSummary.topJurisdictions)}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="footer">
+      ${t('generatedBySystem') || 'Generated by Awaz-e-Shehr System'} • ${t('preset') || 'Preset'}: ${String(reportPreset || '').toUpperCase()}
+    </div>
+  </div>
+</body>
+</html>`;
+
+    const w = window.open('', '_blank', 'noopener,noreferrer');
+    if (!w) {
+      showModal(t('error') || 'Error', t('popupBlocked') || 'Popup blocked. Please allow popups to generate PDF.');
+      return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => {
+      w.focus();
+      w.print();
+    };
+  }, [deps, reportDepartmentId, reportFrom, reportPreset, reportSummary, reportTo, showModal, t]);
+
 
   const editSectorOptions = React.useMemo(() => {
     const set = new Set(urbanSectorNames);
@@ -464,7 +801,7 @@ const SuperAdminDashboard = () => {
         showModal(t('error') || 'Error', e?.message || 'Failed to remove deprecated sector');
       }
     })();
-  }, [coverageNormalizationRan, deps, urbanSectorNames]);
+  }, [coverageNormalizationRan, deps, urbanSectorNames, refreshDeps, t]);
 
   useEffect(() => {
     const j = buildJurisdictionText(newDep.areaTypes, newDep.sectors, newDep.ruralJurisdictions);
@@ -480,13 +817,13 @@ const SuperAdminDashboard = () => {
     if (!editingDep) return;
     const j = buildJurisdictionText(editingDep.areaTypes, editingDep.sectors, editingDep.ruralJurisdictions);
     setEditingDep(prev => (prev && prev.jurisdiction === j ? prev : (prev ? { ...prev, jurisdiction: j } : prev)));
-  }, [editingDep?.areaTypes, editingDep?.sectors, editingDep?.ruralJurisdictions]);
+  }, [editingDep?.areaTypes, editingDep?.sectors, editingDep?.ruralJurisdictions, editingDep]);
 
   useEffect(() => {
     if (!editingDep) return;
     setEditDepLocationValidated(false);
     setEditDepLocationValidatedText('');
-  }, [editingDep?.location, editingDep?.areaTypes, editingDep?.sectors, editingDep?.ruralJurisdictions]);
+  }, [editingDep?.location, editingDep?.areaTypes, editingDep?.sectors, editingDep?.ruralJurisdictions, editingDep]);
 
   useEffect(() => {
     if (activePage === 'overview') {
@@ -553,75 +890,7 @@ const SuperAdminDashboard = () => {
       const stored = localStorage.getItem('user');
       if (stored) setUser(JSON.parse(stored));
     } catch {}
-    const onResize = () => {
-      setIsMobile(window.innerWidth <= 576);
-    };
-    onResize();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  const loadHierarchy = async () => {
-    try {
-      // Load Urban Sectors
-      const urban = await dataService.saListUrbanSectors();
-      setUrbanSectors(urban.sectors || []);
-      
-      // Load Rural Jurisdictions
-      const rural = await dataService.saListRuralJurisdictions();
-      setRuralJurisdictions(rural.jurisdictions || []);
-      
-      const policies = await dataService.saListRoutingPolicies();
-      setRoutingPolicies(policies.policies || []);
-
-      const mappings = await dataService.saListCategoryMappings();
-      setCategoryMappings(mappings.mappings || []);
-
-      const rr = await dataService.saListRerouteRequests();
-      setRerouteRequests(rr.requests || []);
-    } catch (e) {
-      console.error('Hierarchy load error:', e);
-    }
-  };
-
-  const loadPolicies = async () => {
-    try {
-      const p = await dataService.saGetPolicies();
-      setPolicies(p.policy || {});
-    } catch (e) {}
-  };
-
-  const refreshDeps = async () => {
-    try {
-      const res = await dataService.saListDepartments();
-      setDeps(res.departments || []);
-    } catch (error) {
-      console.error('Refresh deps error:', error);
-      if (error.message === 'Token is not valid' || error.message.includes('authorization denied')) handleLogout();
-    }
-  };
-
-  const refreshComplaints = async () => {
-    try {
-      const res = await dataService.saGetAllComplaints(filters);
-      setComplaints(res.complaints || []);
-    } catch (error) {
-      console.error('Refresh complaints error:', error);
-      if (error.message === 'Token is not valid' || error.message.includes('authorization denied')) handleLogout();
-    }
-  };
-
-  const loadAnalytics = async () => {
-    try {
-      const t = await dataService.saComplaintTrends('daily');
-      setTrends(t.series || []);
-      const p = await dataService.saDepartmentPerformance();
-      setPerf(p.performance || []);
-    } catch (error) {
-      console.error('Load analytics error:', error);
-      if (error.message === 'Token is not valid' || error.message.includes('authorization denied')) handleLogout();
-    }
-  };
+  }, [refreshDeps, refreshComplaints, loadAnalytics, loadHierarchy, loadPolicies]);
 
   const createDepartment = async (e) => {
     e.preventDefault();
@@ -684,18 +953,6 @@ const SuperAdminDashboard = () => {
         await dataService.saUpdateUrbanSector(id, { name: newName });
         loadHierarchy();
         showModal(t('success') || 'Success', 'Sector updated successfully');
-      } catch (error) {
-        showModal(t('error') || 'Error', error.message);
-      }
-    }
-  };
-
-  const deleteUrbanSector = async (id) => {
-    if (window.confirm(t('confirmDelete') || 'Are you sure you want to delete this sector?')) {
-      try {
-        await dataService.saDeleteUrbanSector(id);
-        loadHierarchy();
-        showModal(t('success') || 'Success', 'Sector deleted successfully');
       } catch (error) {
         showModal(t('error') || 'Error', error.message);
       }
@@ -833,17 +1090,6 @@ const SuperAdminDashboard = () => {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    navigate('/role-selection');
-  };
-
-  const toggleSidebar = () => {
-    if (isMobile) setMenuOpen(!menuOpen);
-    else setSidebarCollapsed(!sidebarCollapsed);
-  };
-
   const searchLocationOnMap = async () => {
     const q = (mapSearchQuery || '').trim();
     if (!q || !mapInstanceRef.current) return;
@@ -867,7 +1113,7 @@ const SuperAdminDashboard = () => {
       (dep.name || '').toLowerCase().includes(q) ||
       (dep.location || '').toLowerCase().includes(q) ||
       (dep.jurisdiction || '').toLowerCase().includes(q) ||
-      Array.isArray(dep.categories) && dep.categories.some(c => (c || '').toLowerCase().includes(q))
+      (Array.isArray(dep.categories) && dep.categories.some(c => (c || '').toLowerCase().includes(q)))
     );
   });
 
@@ -891,18 +1137,24 @@ const SuperAdminDashboard = () => {
       const dept = String(c.department || '').toLowerCase();
       if (!(idStr.includes(q) || cat.includes(q) || dept.includes(q))) return false;
     }
+    if (filterStatus && String(c.status || '') !== String(filterStatus)) return false;
+    if (filterPriority && String(c.priority || '') !== String(filterPriority)) return false;
     if (complaintsFilterMode === 'urban') {
       if (c.location?.areaType !== 'Urban') return false;
-      if (filterUrbanSector) return c.location?.sector === filterUrbanSector;
+      const sq = String(filterUrbanSector || '').toLowerCase().trim();
+      if (sq) return String(c.location?.sector || '').toLowerCase().includes(sq);
       return true;
     }
     if (complaintsFilterMode === 'rural') {
       if (c.location?.areaType !== 'Rural') return false;
-      if (filterRuralJurisdiction) return c.location?.ruralJurisdiction === filterRuralJurisdiction;
+      const rq = String(filterRuralJurisdiction || '').toLowerCase().trim();
+      if (rq) return String(c.location?.ruralJurisdiction || '').toLowerCase().includes(rq);
       return true;
     }
     if (complaintsFilterMode === 'department' && filterDepartmentId) {
-      return String(c.department) === String(filterDepartmentId) || String(c.departmentId) === String(filterDepartmentId);
+      const dep = deps.find(d => String(d._id) === String(filterDepartmentId));
+      const depName = dep?.name ? String(dep.name) : '';
+      return String(c.departmentId || '') === String(filterDepartmentId) || (depName && String(c.department || '') === depName);
     }
     return true;
   });
@@ -930,22 +1182,6 @@ const SuperAdminDashboard = () => {
     return Array.from(map.entries()).map(([key, v]) => ({ key, label: v.label, items: v.items }));
   };
 
-  const loadUsers = async () => {
-    try {
-      const admins = await dataService.saListUsers('dept-admin');
-      const officers = await dataService.saListUsers('field-officer');
-      const citizens = await dataService.saListUsers('citizen');
-      setUsers({ admins: admins.users || [], officers: officers.users || [], citizens: citizens.users || [] });
-    } catch (error) {
-      console.error('Load users error:', error);
-      if (error.message === 'Token is not valid' || error.message.includes('authorization denied')) {
-        handleLogout();
-      }
-    }
-  };
-
-  useEffect(() => { loadUsers(); }, []);
-
   const reopenComplaint = async (id) => {
     try {
       await dataService.saReopenComplaint(id);
@@ -959,33 +1195,33 @@ const SuperAdminDashboard = () => {
 
   return (
     <div className="dashboard-container">
-      <div className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''} ${isMobile && menuOpen ? 'active' : ''}`}>
+      <div className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
-          <div className="header-top">
-            <div className="app-branding">
-              <h2>Awaz e Shehr</h2>
-              <p>Super Admin</p>
-            </div>
-            <button 
-              className="internal-toggle-btn" 
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            >
-              <i className={`fas ${sidebarCollapsed ? 'fa-bars' : 'fa-times'}`}></i>
-            </button>
+          <div className="app-branding">
+            <img className="app-logo" src={`${process.env.PUBLIC_URL}/awazeshehr.jpeg`} alt={t('appTitle')} />
+            <h2>{t('appTitle')}</h2>
+            <p>Super Admin Command</p>
           </div>
+          <button
+            type="button"
+            className="sa-sidebar-toggle"
+            onClick={() => setSidebarCollapsed(v => !v)}
+            aria-label={sidebarCollapsed ? (t('expandSidebar') || 'Expand sidebar') : (t('collapseSidebar') || 'Collapse sidebar')}
+          >
+            <i className={`fas ${sidebarCollapsed ? 'fa-angles-right' : 'fa-angles-left'}`}></i>
+          </button>
         </div>
         <div className="sidebar-menu">
           {[
-            { id: 'overview', icon: 'fa-tachometer-alt', labelKey: 'overview' },
-            { id: 'hierarchy', icon: 'fa-sitemap', labelKey: 'hierarchy' },
+            { id: 'overview', icon: 'fa-th-large', labelKey: 'overview' },
+            { id: 'hierarchy', icon: 'fa-network-wired', labelKey: 'hierarchy' },
             { id: 'departments', icon: 'fa-building', labelKey: 'departments' },
-            { id: 'routing', icon: 'fa-random', labelKey: 'routing' },
-            { id: 'policies', icon: 'fa-sliders-h', labelKey: 'policies' },
-            { id: 'admin', icon: 'fa-user-shield', labelKey: 'adminRegistration' },
-            { id: 'complaints', icon: 'fa-clipboard-list', labelKey: 'complaints' },
-            { id: 'analytics', icon: 'fa-chart-bar', labelKey: 'analytics' },
-            { id: 'users', icon: 'fa-users', labelKey: 'users' }
+            { id: 'routing', icon: 'fa-route', labelKey: 'routing' },
+            { id: 'policies', icon: 'fa-shield-alt', labelKey: 'policies' },
+            { id: 'admin', icon: 'fa-user-plus', labelKey: 'adminRegistration' },
+            { id: 'complaints', icon: 'fa-folder-open', labelKey: 'complaints' },
+            { id: 'analytics', icon: 'fa-chart-pie', labelKey: 'analytics' },
+            { id: 'users', icon: 'fa-user-friends', labelKey: 'users' }
           ].map(item => (
             <div
               key={item.id}
@@ -998,23 +1234,12 @@ const SuperAdminDashboard = () => {
               <span>{t(item.labelKey)}</span>
             </div>
           ))}
-          <div className="menu-item" onClick={handleLogout} title={t('logout')} data-label={t('logout')}>
-            <i className="fas fa-sign-out-alt"></i>
+          <div className="menu-item logout-btn" onClick={handleLogout} title={t('logout')}>
+            <i className="fas fa-power-off"></i>
             <span>{t('logout')}</span>
           </div>
         </div>
-
       </div>
-
-      {/* Mobile Floating Toggle */}
-      <button 
-        className={`mobile-floating-toggle ${sidebarCollapsed ? 'hidden' : ''}`}
-        onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-      >
-        <i className="fas fa-bars"></i>
-      </button>
-
-      
 
       <div className={`main-content ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="header">
@@ -1024,43 +1249,49 @@ const SuperAdminDashboard = () => {
               <h3>{user?.fullName || t('superAdmin')}</h3>
               <p>
                 {t('systemAdministration')}
-                <span className="role-badge super-admin">Super Admin</span>
+                <span className="role-badge super-admin">Primary Authority</span>
               </p>
             </div>
           </div>
           <div className="header-actions">
-            <button className="btn btn-outline btn-sm me-3" onClick={toggleLanguage}>
+            <button className="btn btn-outline btn-sm" onClick={toggleLanguage}>
               {language === 'english' ? 'اردو' : 'English'}
             </button>
             <div className="status-indicator">
               <div className="status-dot online"></div>
-              <span>{t('online')}</span>
+              <span>System Live</span>
             </div>
           </div>
         </div>
 
-
-
         {activePage === 'overview' && (
           <div className="page-content active">
-            <h1 className="form-title">{t('superAdminOverview')}</h1>
-            <div className="map-search">
-              <div className="input-with-icon">
-                <i className="fas fa-search input-icon"></i>
-                <input className="sa-input map-search-input" placeholder={t('searchLocation') || 'Search location on map'} value={mapSearchQuery} onChange={e => setMapSearchQuery(e.target.value)} />
+            <div className="section-header">
+              <h1 className="form-title">Dashboard Overview</h1>
+              <div className="map-search">
+                <div className="input-with-icon">
+                  <i className="fas fa-search input-icon"></i>
+                  <input 
+                    className="sa-input map-search-input" 
+                    placeholder={t('searchLocation') || 'Analyze specific area...'} 
+                    value={mapSearchQuery} 
+                    onChange={e => setMapSearchQuery(e.target.value)} 
+                  />
+                </div>
+                <button className="btn btn-primary btn-sm" onClick={searchLocationOnMap}>Analyze</button>
               </div>
-              <button className="btn btn-info map-search-btn" onClick={searchLocationOnMap}>{t('search') || 'Search'}</button>
             </div>
+
             <div className="dashboard-cards">
               {[
-                { value: complaints.length, title: t('totalComplaints'), icon: 'fa-clipboard-list', type: 'total' },
-                { value: complaints.filter(c => c.status === 'pending').length, title: t('pending'), icon: 'fa-clock', type: 'pending' },
-                { value: complaints.filter(c => c.status === 'in-progress').length, title: t('inProgress'), icon: 'fa-spinner', type: 'progress' },
-                { value: complaints.filter(c => c.status === 'resolved').length, title: t('resolved'), icon: 'fa-check-circle', type: 'resolved' },
-                { value: deps.length, title: t('departments'), icon: 'fa-building', type: 'departments' },
-                { value: `${feedbackAnalytics.positivePercent}%`, title: t('positiveFeedback') || 'Positive Feedback', icon: 'fa-smile', type: 'positive' },
-                { value: `${feedbackAnalytics.negativePercent}%`, title: t('negativeFeedback') || 'Negative Feedback', icon: 'fa-frown', type: 'negative' },
-                { value: `${feedbackAnalytics.overallSatisfactionScore}%`, title: t('overallSatisfaction') || 'Overall Satisfaction', icon: 'fa-chart-line', type: 'satisfaction' }
+                { value: complaints.length, title: 'Total Operations', icon: 'fa-clipboard-check', type: 'total' },
+                { value: complaints.filter(c => c.status === 'pending').length, title: 'Attention Required', icon: 'fa-exclamation-circle', type: 'pending' },
+                { value: complaints.filter(c => c.status === 'in-progress').length, title: 'Active Missions', icon: 'fa-running', type: 'progress' },
+                { value: complaints.filter(c => c.status === 'resolved').length, title: 'Completed', icon: 'fa-check-double', type: 'resolved' },
+                { value: deps.length, title: 'Executive Units', icon: 'fa-building', type: 'departments' },
+                { value: `${feedbackAnalytics.positivePercent}%`, title: 'Public Approval', icon: 'fa-user-check', type: 'positive' },
+                { value: `${feedbackAnalytics.negativePercent}%`, title: 'Critical Issues', icon: 'fa-user-times', type: 'negative' },
+                { value: `${feedbackAnalytics.overallSatisfactionScore}%`, title: 'System Trust', icon: 'fa-medal', type: 'satisfaction' }
               ].map(card => (
                 <div key={card.type} className="card">
                   <div className="card-header">
@@ -1075,14 +1306,12 @@ const SuperAdminDashboard = () => {
                 </div>
               ))}
             </div>
-            <div className="sa-grid" style={{ marginBottom: '20px' }}>
-              <div className="sa-panel">
-                <h4 className="section-subtitle">{t('complaintDistribution')}</h4>
-                <p style={{ marginBottom: '10px', fontSize: '0.9rem', color: '#666' }}>
-                  {t('mapDescription') || "Red areas indicate high complaint volume"}
-                </p>
-                <div className="map-wrapper" style={{ border: '1px solid #ddd', borderRadius: '8px', overflow: 'hidden' }}>
-                  <div ref={mapRef} style={{ width: '100%', height: '500px', zIndex: 1 }}></div>
+
+            <div className="sa-grid">
+              <div className="sa-panel" style={{ gridColumn: 'span 2' }}>
+                <h4 className="section-subtitle">Geo-Spatial Intelligence</h4>
+                <div className="map-wrapper" style={{ borderRadius: '16px', overflow: 'hidden', height: '500px' }}>
+                  <div ref={mapRef} style={{ width: '100%', height: '100%', zIndex: 1 }}></div>
                 </div>
               </div>
             </div>
@@ -1100,6 +1329,7 @@ const SuperAdminDashboard = () => {
                   <div className="sa-list-title"><i className="fas fa-building"></i>{t('createDepartment') || 'Create Department'}</div>
                 </div>
                 <form className="sa-form" onSubmit={createDepartment}>
+                  <div className="sa-form-section-title">{t('basicInformation') || 'Basic Information'}</div>
                   <div className="form-field">
                     <div className="form-label">{t('fullName')}</div>
                     <input className="sa-input" placeholder={t('fullName')} value={newDep.name} onChange={e => setNewDep({ ...newDep, name: e.target.value })} required />
@@ -1107,8 +1337,8 @@ const SuperAdminDashboard = () => {
                   
                   <div className="form-field">
                     <div className="form-label">{t('operationalAreaTypes') || 'Operational Area Types'}</div>
-                    <div style={{ display: 'flex', gap: '20px', marginTop: '5px', marginBottom: '10px' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer' }}>
+                    <div className="sa-checkbox-row">
+                      <label className="sa-checkbox">
                         <input 
                           type="checkbox" 
                           checked={newDep.areaTypes.includes('Urban')} 
@@ -1119,9 +1349,9 @@ const SuperAdminDashboard = () => {
                             setNewDep({ ...newDep, areaTypes: newTypes });
                           }} 
                         />
-                        Urban
+                        {t('urban') || 'Urban'}
                       </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer' }}>
+                      <label className="sa-checkbox">
                         <input 
                           type="checkbox" 
                           checked={newDep.areaTypes.includes('Rural')} 
@@ -1132,18 +1362,17 @@ const SuperAdminDashboard = () => {
                             setNewDep({ ...newDep, areaTypes: newTypes });
                           }} 
                         />
-                        Rural
+                        {t('rural') || 'Rural'}
                       </label>
                     </div>
                   </div>
 
                   {newDep.areaTypes.includes('Urban') && (
                     <div className="form-field">
-                      <div className="form-label">{t('sectors') || 'Sectors'} (Select Multiple)</div>
+                      <div className="form-label">{t('sectors') || 'Sectors'}</div>
                       <select 
                         multiple 
-                        className="sa-select" 
-                        style={{ height: '120px' }}
+                        className="sa-select sa-multi-select"
                         value={newDep.sectors} 
                         onChange={e => {
                           const selected = Array.from(e.target.selectedOptions, option => option.value);
@@ -1156,17 +1385,16 @@ const SuperAdminDashboard = () => {
                           </option>
                         ))}
                       </select>
-                      <div className="form-helper">Hold Ctrl/Cmd to select multiple</div>
+                      <div className="form-helper">{t('multiSelectHelper') || 'Hold Ctrl/Cmd to select multiple'}</div>
                     </div>
                   )}
 
                   {newDep.areaTypes.includes('Rural') && (
                     <div className="form-field">
-                      <div className="form-label">{t('ruralJurisdictions') || 'Rural Jurisdictions'} (Select Multiple)</div>
+                      <div className="form-label">{t('ruralJurisdictions') || 'Rural Jurisdictions'}</div>
                       <select 
                         multiple 
-                        className="sa-select" 
-                        style={{ height: '120px' }}
+                        className="sa-select sa-multi-select"
                         value={newDep.ruralJurisdictions} 
                         onChange={e => {
                           const selected = Array.from(e.target.selectedOptions, option => option.value);
@@ -1177,15 +1405,17 @@ const SuperAdminDashboard = () => {
                           <option key={j._id} value={j.name}>{j.name}</option>
                         ))}
                       </select>
-                      <div className="form-helper">Hold Ctrl/Cmd to select multiple</div>
+                      <div className="form-helper">{t('multiSelectHelper') || 'Hold Ctrl/Cmd to select multiple'}</div>
                     </div>
                   )}
 
+                  <div className="sa-form-section-title">{t('services') || 'Services'}</div>
                   <div className="form-field">
                     <div className="form-label">{t('services') || 'Services (Sub-categories)'}</div>
                     <input className="sa-input" placeholder="e.g. Water Supply, Pipeline Repair" value={newDep.servicesOffered} onChange={e => setNewDep({ ...newDep, servicesOffered: e.target.value })} />
                     <div className="form-helper">{t('servicesHelper') || 'Comma-separated list'}</div>
                   </div>
+                  <div className="sa-form-section-title">{t('addressValidation') || 'Address Validation'}</div>
                   <div className="form-field">
                     <div className="form-label">{t('location') || 'Physical Address (Islamabad)'}</div>
                     <input
@@ -1196,7 +1426,7 @@ const SuperAdminDashboard = () => {
                       disabled={!isCoverageReady(newDep)}
                       required={isCoverageReady(newDep)}
                     />
-                    <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+                    <div className="sa-inline-row">
                       <button
                         className="btn btn-outline"
                         type="button"
@@ -1225,7 +1455,7 @@ const SuperAdminDashboard = () => {
                       >
                         {newDepLocationValidating ? (t('validating') || 'Validating...') : (t('validate') || 'Validate')}
                       </button>
-                      <div style={{ fontSize: '0.85rem', color: newDepLocationValidated ? '#1b7f3a' : '#666', alignSelf: 'center' }}>
+                      <div className={`sa-inline-status ${newDepLocationValidated ? 'ok' : ''}`}>
                         {newDepLocationValidated ? (newDepLocationValidatedText || 'Validated') : (isCoverageReady(newDep) ? 'Not validated' : 'Select operational coverage first')}
                       </div>
                     </div>
@@ -1253,6 +1483,7 @@ const SuperAdminDashboard = () => {
                       <i className="fas fa-search input-icon"></i>
                       <input className="sa-input" placeholder={t('search') || 'Search'} value={departmentSearch} onChange={e => setDepartmentSearch(e.target.value)} />
                     </div>
+                    <div className="sa-count-badge">{filteredDepartments.length}</div>
                   </div>
                 </div>
                 <div className="sa-list">
@@ -1262,16 +1493,29 @@ const SuperAdminDashboard = () => {
                   {filteredDepartments.map(dep => (
                     <div key={dep._id} className="sa-list-item">
                       <div className="sa-item-header">
-                        <strong>{dep.name}</strong>
+                        <div className="sa-dep-title">
+                          <strong>{dep.name}</strong>
+                          <div className="sa-dep-tags">
+                            {(dep.areaTypes || []).map(type => <span key={`${dep._id}-${type}`} className="sa-tag">{type}</span>)}
+                            {(dep.areaTypes || []).includes('Urban') && <span className="sa-tag subtle">{t('sectors') || 'Sectors'}: {(dep.sectors || []).length}</span>}
+                            {(dep.areaTypes || []).includes('Rural') && <span className="sa-tag subtle">{t('ruralJurisdictions') || 'Rural Jurisdictions'}: {(dep.ruralJurisdictions || []).length}</span>}
+                          </div>
+                        </div>
                         <button className="btn btn-outline btn-sm" onClick={() => startEditDepartment(dep)}>{t('edit') || 'Edit'}</button>
                       </div>
-                      <div className="sa-item-details">
-                        <div>{t('location')}: {dep.location}</div>
-                        <div>{t('jurisdiction')}: {dep.jurisdiction}</div>
-                        <div>Area Types: {(dep.areaTypes||[]).join(', ')}</div>
-                        {(dep.areaTypes||[]).includes('Urban') && <div>Sectors: {(dep.sectors||[]).join(', ')}</div>}
-                        {(dep.areaTypes||[]).includes('Rural') && <div>Rural Areas: {(dep.ruralJurisdictions||[]).join(', ')}</div>}
-                        <div>{t('services')}: {(dep.servicesOffered||[]).join(', ')}</div>
+                      <div className="sa-item-details sa-dep-details">
+                        <div className="sa-meta-row">
+                          <div className="sa-meta-k">{t('location') || 'Location'}</div>
+                          <div className="sa-meta-v">{dep.location || '—'}</div>
+                        </div>
+                        <div className="sa-meta-row">
+                          <div className="sa-meta-k">{t('jurisdiction') || 'Jurisdiction'}</div>
+                          <div className="sa-meta-v">{dep.jurisdiction || '—'}</div>
+                        </div>
+                        <div className="sa-meta-row">
+                          <div className="sa-meta-k">{t('services') || 'Services'}</div>
+                          <div className="sa-meta-v">{(dep.servicesOffered || []).join(', ') || '—'}</div>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1285,9 +1529,20 @@ const SuperAdminDashboard = () => {
           <section className="sa-section">
             <div className="section-header">
               <h3 className="form-title">{t('hierarchy') || 'Hierarchy'} (Islamabad)</h3>
-              <div className="segmented">
-                <div className={`seg-item ${hierarchyTab === 'urban' ? 'active' : ''}`} onClick={() => setHierarchyTab('urban')}>{t('urbanSectors') || 'Urban Sectors'}</div>
-                <div className={`seg-item ${hierarchyTab === 'rural' ? 'active' : ''}`} onClick={() => setHierarchyTab('rural')}>{t('ruralJurisdictions') || 'Rural Jurisdictions'}</div>
+              <div className="sa-hierarchy-actions">
+                <div className="segmented">
+                  <button type="button" className={`seg-item ${hierarchyTab === 'urban' ? 'active' : ''}`} onClick={() => { setHierarchyTab('urban'); setHierarchySearch(''); }}>{t('urbanSectors') || 'Urban Sectors'}</button>
+                  <button type="button" className={`seg-item ${hierarchyTab === 'rural' ? 'active' : ''}`} onClick={() => { setHierarchyTab('rural'); setHierarchySearch(''); }}>{t('ruralJurisdictions') || 'Rural Jurisdictions'}</button>
+                </div>
+                <div className="input-with-icon inline-search">
+                  <i className="fas fa-search input-icon"></i>
+                  <input
+                    className="sa-input"
+                    placeholder={hierarchyTab === 'urban' ? (t('searchSector') || 'Search Sector') : (t('searchJurisdiction') || 'Search Jurisdiction')}
+                    value={hierarchySearch}
+                    onChange={e => setHierarchySearch(e.target.value)}
+                  />
+                </div>
               </div>
             </div>
             
@@ -1308,10 +1563,15 @@ const SuperAdminDashboard = () => {
                 <div className="sa-panel premium">
                   <div className="panel-header">
                     <div className="sa-list-title"><i className="fas fa-list"></i>{t('existingSectors') || 'Existing Sectors'}</div>
+                    <div className="sa-count-badge">
+                      {(urbanSectors || []).filter(s => String(s?.name || '').toLowerCase().includes(String(hierarchySearch || '').toLowerCase().trim())).length}
+                    </div>
                   </div>
                   <div className="sa-list">
                     {urbanSectors.length === 0 && <div className="list-empty">{t('noData')}</div>}
-                    {urbanSectors.map(s => (
+                    {urbanSectors
+                      .filter(s => String(s?.name || '').toLowerCase().includes(String(hierarchySearch || '').toLowerCase().trim()))
+                      .map(s => (
                       <div key={s._id} className="sa-list-item">
                         <div className="sa-item-header"><strong>{s.name}</strong></div>
                         <div className="sa-item-actions">
@@ -1342,10 +1602,15 @@ const SuperAdminDashboard = () => {
                 <div className="sa-panel premium">
                   <div className="panel-header">
                     <div className="sa-list-title"><i className="fas fa-list"></i>{t('existingJurisdictions') || 'Existing Jurisdictions'}</div>
+                    <div className="sa-count-badge">
+                      {(ruralJurisdictions || []).filter(j => String(j?.name || '').toLowerCase().includes(String(hierarchySearch || '').toLowerCase().trim())).length}
+                    </div>
                   </div>
                   <div className="sa-list">
                     {ruralJurisdictions.length === 0 && <div className="list-empty">{t('noData')}</div>}
-                    {ruralJurisdictions.map(j => (
+                    {ruralJurisdictions
+                      .filter(j => String(j?.name || '').toLowerCase().includes(String(hierarchySearch || '').toLowerCase().trim()))
+                      .map(j => (
                       <div key={j._id} className="sa-list-item">
                         <div className="sa-item-header"><strong>{j.name}</strong></div>
                         <div className="sa-item-actions">
@@ -1510,10 +1775,10 @@ const SuperAdminDashboard = () => {
                       onChange={e => setNewPolicy(prev => ({ ...prev, allowedPriorities: e.target.value ? [e.target.value] : [] }))}
                     >
                       <option value="">{t('any') || 'Any'}</option>
-                      <option value="low">low</option>
-                      <option value="medium">medium</option>
-                      <option value="high">high</option>
-                      <option value="critical">critical</option>
+                      <option value="low">{t('priorityLow') || 'Low'}</option>
+                      <option value="medium">{t('priorityMedium') || 'Medium'}</option>
+                      <option value="high">{t('priorityHigh') || 'High'}</option>
+                      <option value="critical">{t('priorityCritical') || 'Critical'}</option>
                     </select>
                   </div>
                   <div className="form-field">
@@ -1657,10 +1922,10 @@ const SuperAdminDashboard = () => {
                   <div className="form-field">
                     <div className="form-label">{t('complaintPriority') || 'Complaint Priority'}</div>
                     <select className="sa-select" value={routingSim.priority} onChange={e => setRoutingSim(prev => ({ ...prev, priority: e.target.value }))}>
-                      <option value="low">low</option>
-                      <option value="medium">medium</option>
-                      <option value="high">high</option>
-                      <option value="critical">critical</option>
+                      <option value="low">{t('priorityLow') || 'Low'}</option>
+                      <option value="medium">{t('priorityMedium') || 'Medium'}</option>
+                      <option value="high">{t('priorityHigh') || 'High'}</option>
+                      <option value="critical">{t('priorityCritical') || 'Critical'}</option>
                     </select>
                   </div>
                   <div className="form-field">
@@ -1793,7 +2058,7 @@ const SuperAdminDashboard = () => {
                           <div>#{p.priority}</div>
                         </div>
                         <div className="sa-item-details">
-                          <div><strong>{t('action') || 'Action'}:</strong> {actionType}{actionType === 'route' && depName ? ` → ${depName}` : ''}</div>
+                          <div><strong>{t('action') || 'Action'}:</strong> {actionType}{(actionType === 'route' && depName) ? ` → ${depName}` : ''}</div>
                           {(p?.conditions?.allowedPriorities || []).length > 0 && <div><strong>{t('complaintPriority') || 'Complaint Priority'}:</strong> {p.conditions.allowedPriorities.join(', ')}</div>}
                           {(p?.conditions?.keywords || []).length > 0 && <div><strong>{t('keywords') || 'Keywords'}:</strong> {p.conditions.keywords.join(', ')}</div>}
                           {typeof p?.conditions?.maxOpenComplaints === 'number' && <div><strong>{t('backlogThreshold') || 'Backlog Threshold'}:</strong> {p.conditions.maxOpenComplaints}</div>}
@@ -1911,7 +2176,7 @@ const SuperAdminDashboard = () => {
                                 className="sa-input"
                                 style={{ maxWidth: '140px' }}
                                 value={
-                                  (policies?.slaHoursByCategory && policies.slaHoursByCategory[cat]) ||
+                                  ((policies?.slaHoursByCategory && policies.slaHoursByCategory[cat])) ||
                                   ''
                                 }
                                 onChange={e => {
@@ -2028,12 +2293,12 @@ const SuperAdminDashboard = () => {
             <div className="section-header">
               <h3 className="form-title">{t('adminRegistration') || 'Admin Registration'}</h3>
             </div>
-            <div className="sa-grid">
-              <div className="sa-panel premium">
+            <div className="sa-grid sa-admin-layout">
+              <div className="sa-panel premium sa-admin-form-panel">
                 <div className="panel-header">
-                  <div className="sa-list-title"><i className="fas fa-user-shield"></i>{t('registerDeptAdmin') || 'Register Dept Admin'}</div>
+                  <div className="sa-list-title"><i className="fas fa-user-shield"></i>{t('registerDeptAdmin') || 'Register Department Admin'}</div>
                 </div>
-                <form className="sa-form" onSubmit={createUser}>
+                <form className="sa-form sa-form-grid" onSubmit={createUser}>
                   <div className="form-field">
                     <div className="form-label">{t('fullName')}</div>
                     <input className="sa-input" placeholder={t('fullName')} value={newUser.fullName} onChange={e => setNewUser({ ...newUser, fullName: e.target.value })} required />
@@ -2042,81 +2307,107 @@ const SuperAdminDashboard = () => {
                     <div className="form-label">{t('email')}</div>
                     <input className="sa-input" placeholder={t('email')} type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} required />
                   </div>
-                  <div className="form-field">
-                    <div className="form-label">{t('passwordPlaceholder')}</div>
-                    <input className="sa-input" placeholder={t('passwordPlaceholder')} type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} required />
+
+                  <div className="form-field span-2">
+                    <div className="form-label">{t('passwordPlaceholder') || 'Password'}</div>
+                    <input className="sa-input" placeholder={t('passwordPlaceholder') || 'Password'} type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} required />
                   </div>
-                  {/* District selection removed, auto-selected Islamabad via logic */}
-                  
+
                   <div className="form-field">
                     <div className="form-label">{t('areaType') || 'Area Type'}</div>
-                    <select className="sa-select" value={newUser.areaType || 'Urban'} onChange={e => setNewUser({ ...newUser, areaType: e.target.value, sector: '', ruralJurisdiction: '' })}>
-                       <option value="Urban">Urban</option>
-                       <option value="Rural">Rural</option>
+                    <select className="sa-select" value={newUser.areaType || 'Urban'} onChange={e => setNewUser({ ...newUser, areaType: e.target.value, sector: '', ruralJurisdiction: '', departmentId: '' })}>
+                      <option value="Urban">{t('urban') || 'Urban'}</option>
+                      <option value="Rural">{t('rural') || 'Rural'}</option>
                     </select>
                   </div>
 
                   {newUser.areaType === 'Urban' && (
                     <div className="form-field">
                       <div className="form-label">{t('sector') || 'Sector'}</div>
-                      <select className="sa-select" value={newUser.sector || ''} onChange={e => setNewUser({ ...newUser, sector: e.target.value })}>
-                        <option value="">Select Sector</option>
-                        {urbanSectors.map(s => <option key={s._id} value={s.name}>{s.name}</option>)}
-                      </select>
+                      <input
+                        className="sa-input"
+                        list="sa-admin-sector-list"
+                        placeholder={t('searchSector') || 'Search Sector'}
+                        value={newUser.sector || ''}
+                        onChange={e => setNewUser({ ...newUser, sector: e.target.value, departmentId: '' })}
+                      />
+                      <datalist id="sa-admin-sector-list">
+                        {(urbanSectorNames || [])
+                          .slice()
+                          .sort((a, b) => String(a).localeCompare(String(b)))
+                          .map(name => <option key={name} value={name} />)}
+                      </datalist>
                     </div>
                   )}
 
                   {newUser.areaType === 'Rural' && (
                     <div className="form-field">
                       <div className="form-label">{t('ruralJurisdiction') || 'Rural Jurisdiction'}</div>
-                      <select className="sa-select" value={newUser.ruralJurisdiction || ''} onChange={e => setNewUser({ ...newUser, ruralJurisdiction: e.target.value })}>
-                        <option value="">Select Jurisdiction</option>
-                        {ruralJurisdictions.map(j => <option key={j._id} value={j.name}>{j.name}</option>)}
-                      </select>
+                      <input
+                        className="sa-input"
+                        list="sa-admin-jurisdiction-list"
+                        placeholder={t('searchJurisdiction') || 'Search Jurisdiction'}
+                        value={newUser.ruralJurisdiction || ''}
+                        onChange={e => setNewUser({ ...newUser, ruralJurisdiction: e.target.value, departmentId: '' })}
+                      />
+                      <datalist id="sa-admin-jurisdiction-list">
+                        {(ruralJurisdictions || [])
+                          .map(j => j?.name)
+                          .filter(Boolean)
+                          .slice()
+                          .sort((a, b) => String(a).localeCompare(String(b)))
+                          .map(name => <option key={name} value={name} />)}
+                      </datalist>
                     </div>
                   )}
 
-                  <div className="form-field">
-                    <div className="form-label">{t('departmentLocation') || 'Department Location'}</div>
+                  <div className="form-field span-2">
+                    <div className="form-label">{t('department') || 'Department'}</div>
                     <select className="sa-select" value={newUser.departmentId || ''} onChange={e => setNewUser({ ...newUser, departmentId: e.target.value })}>
-                      <option value="">{t('departmentLocation') || 'Department Location'}</option>
-                      {deps.filter(dep => {
-                        // Area Type Check
-                        if (dep.areaTypes && dep.areaTypes.length > 0) {
-                           if (!dep.areaTypes.includes(newUser.areaType)) return false;
-                        } else if (dep.areaType && dep.areaType !== newUser.areaType) {
-                           return false; 
-                        }
-
-                        // Sector Check
-                        if (newUser.areaType === 'Urban' && newUser.sector) {
-                           if (dep.sectors && dep.sectors.length > 0 && !dep.sectors.includes(newUser.sector)) return false;
-                        }
-
-                        // Rural Jurisdiction Check
-                        if (newUser.areaType === 'Rural' && newUser.ruralJurisdiction) {
-                           if (dep.ruralJurisdictions && dep.ruralJurisdictions.length > 0 && !dep.ruralJurisdictions.includes(newUser.ruralJurisdiction)) return false;
-                        }
-                        
-                        return true;
-                      }).map(dep => (
-                        <option key={dep._id} value={dep._id}>{dep.name} {dep.areaType ? `(${dep.areaType})` : ''}</option>
+                      <option value="">{t('selectDepartment') || 'Select Department'}</option>
+                      {eligibleAdminDepartments.map(dep => (
+                        <option key={dep._id} value={dep._id}>{dep.name}</option>
                       ))}
                     </select>
+                    <div className="form-helper">{(t('available') || 'Available')}: {eligibleAdminDepartments.length}</div>
                   </div>
-                  
-                  {newUser.departmentId && (
-                    <div className="form-field">
-                      <div className="form-label">{t('locationAddress') || 'Location Address'}</div>
-                      <div className="sa-input readonly" style={{ background: '#f5f5f5', padding: '10px', borderRadius: '4px' }}>
-                        {deps.find(d => d._id === newUser.departmentId)?.location || 'N/A'}
-                      </div>
-                    </div>
-                  )}
-                  <button className="btn btn-primary" type="submit" disabled={creating}>{creating ? t('loading') : (t('registerDeptAdmin') || 'Register Dept Admin')}</button>
+
+                  <div className="form-field span-2">
+                    <button className="btn btn-primary" type="submit" disabled={creating}>
+                      {creating ? (t('loading') || 'Loading...') : (t('registerDeptAdmin') || 'Register Department Admin')}
+                    </button>
+                  </div>
                 </form>
                 {saCreateError && <div className="sa-status danger">{saCreateError}</div>}
                 {saCreateStatus && <div className="sa-status success">{saCreateStatus}</div>}
+              </div>
+
+              <div className="sa-panel premium sa-admin-preview-panel">
+                <div className="panel-header">
+                  <div className="sa-list-title"><i className="fas fa-clipboard-list"></i>{t('details') || 'Details'}</div>
+                </div>
+                <div className="sa-kv">
+                  <div className="sa-kv-row">
+                    <div className="sa-kv-k">{t('areaType') || 'Area Type'}</div>
+                    <div className="sa-kv-v">{newUser.areaType || '-'}</div>
+                  </div>
+                  <div className="sa-kv-row">
+                    <div className="sa-kv-k">{newUser.areaType === 'Rural' ? (t('ruralJurisdiction') || 'Rural Jurisdiction') : (t('sector') || 'Sector')}</div>
+                    <div className="sa-kv-v">{(newUser.areaType === 'Rural' ? newUser.ruralJurisdiction : newUser.sector) || (t('any') || 'Any')}</div>
+                  </div>
+                  <div className="sa-kv-row">
+                    <div className="sa-kv-k">{t('departments') || 'Departments'}</div>
+                    <div className="sa-kv-v">{eligibleAdminDepartments.length}</div>
+                  </div>
+                  <div className="sa-kv-row">
+                    <div className="sa-kv-k">{t('selectedDepartment') || 'Selected Department'}</div>
+                    <div className="sa-kv-v">{selectedAdminDepartment?.name || '—'}</div>
+                  </div>
+                  <div className="sa-kv-row">
+                    <div className="sa-kv-k">{t('location') || 'Location'}</div>
+                    <div className="sa-kv-v">{selectedAdminDepartment?.location || '—'}</div>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -2126,93 +2417,283 @@ const SuperAdminDashboard = () => {
           <section className="sa-section">
             <div className="section-header">
               <h3 className="form-title">{t('complaints') || 'Complaints'}</h3>
-              <div className="panel-actions">
+              <div className="sa-complaints-actions">
                 <div className="input-with-icon inline-search">
                   <i className="fas fa-search input-icon"></i>
                   <input className="sa-input" placeholder={t('search') || 'Search'} value={complaintSearch} onChange={e => setComplaintSearch(e.target.value)} />
                 </div>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={() => {
+                    setComplaintSearch('');
+                    setFilterStatus('');
+                    setFilterPriority('');
+                    setFilterUrbanSector('');
+                    setFilterRuralJurisdiction('');
+                    setFilterDepartmentId('');
+                    setComplaintsGroupSearch('');
+                  }}
+                >
+                  {t('clear') || 'Clear'}
+                </button>
               </div>
             </div>
-            <div className="sa-panel premium">
-              <div className="panel-header">
+            <div className="sa-panel premium sa-complaints-panel">
+              <div className="sa-complaints-toolbar">
                 <div className="segmented">
-                  <div className={`seg-item ${complaintsFilterMode === 'urban' ? 'active' : ''}`} onClick={() => setComplaintsFilterMode('urban')}>{t('urban') || 'Urban'}</div>
-                  <div className={`seg-item ${complaintsFilterMode === 'rural' ? 'active' : ''}`} onClick={() => setComplaintsFilterMode('rural')}>{t('rural') || 'Rural'}</div>
-                  <div className={`seg-item ${complaintsFilterMode === 'department' ? 'active' : ''}`} onClick={() => setComplaintsFilterMode('department')}>{t('departments') || 'Departments'}</div>
+                  <button type="button" className={`seg-item ${complaintsFilterMode === 'urban' ? 'active' : ''}`} onClick={() => setComplaintsFilterMode('urban')}>{t('urban') || 'Urban'}</button>
+                  <button type="button" className={`seg-item ${complaintsFilterMode === 'rural' ? 'active' : ''}`} onClick={() => setComplaintsFilterMode('rural')}>{t('rural') || 'Rural'}</button>
+                  <button type="button" className={`seg-item ${complaintsFilterMode === 'department' ? 'active' : ''}`} onClick={() => setComplaintsFilterMode('department')}>{t('departments') || 'Departments'}</button>
                 </div>
-                <div className="panel-actions">
+
+                <div className="sa-complaints-filters">
                   {complaintsFilterMode === 'urban' && (
-                    <select className="sa-select" value={filterUrbanSector} onChange={e => setFilterUrbanSector(e.target.value)}>
-                      <option value="">{t('allSectors') || 'All Sectors'}</option>
-                      {urbanSectors.map(s => <option key={s._id} value={s.name}>{s.name}</option>)}
-                    </select>
+                    <div className="sa-filter-inline">
+                      <div className="input-with-icon">
+                        <i className="fas fa-search input-icon"></i>
+                        <input
+                          className="sa-input sa-input-sm"
+                          list="sa-complaints-sector-list"
+                          placeholder={t('searchSector') || 'Search Sector'}
+                          value={filterUrbanSector}
+                          onChange={e => setFilterUrbanSector(e.target.value)}
+                        />
+                      </div>
+                      <datalist id="sa-complaints-sector-list">
+                        {(urbanSectorNames || [])
+                          .slice()
+                          .sort((a, b) => String(a).localeCompare(String(b)))
+                          .map(name => <option key={name} value={name} />)}
+                      </datalist>
+                    </div>
                   )}
                   {complaintsFilterMode === 'rural' && (
-                    <select className="sa-select" value={filterRuralJurisdiction} onChange={e => setFilterRuralJurisdiction(e.target.value)}>
-                      <option value="">{t('allJurisdictions') || 'All Jurisdictions'}</option>
-                      {ruralJurisdictions.map(j => <option key={j._id} value={j.name}>{j.name}</option>)}
-                    </select>
+                    <div className="sa-filter-inline">
+                      <div className="input-with-icon">
+                        <i className="fas fa-search input-icon"></i>
+                        <input
+                          className="sa-input sa-input-sm"
+                          list="sa-complaints-jurisdiction-list"
+                          placeholder={t('searchJurisdiction') || 'Search Jurisdiction'}
+                          value={filterRuralJurisdiction}
+                          onChange={e => setFilterRuralJurisdiction(e.target.value)}
+                        />
+                      </div>
+                      <datalist id="sa-complaints-jurisdiction-list">
+                        {(ruralJurisdictions || [])
+                          .map(j => j?.name)
+                          .filter(Boolean)
+                          .slice()
+                          .sort((a, b) => String(a).localeCompare(String(b)))
+                          .map(name => <option key={name} value={name} />)}
+                      </datalist>
+                    </div>
                   )}
                   {complaintsFilterMode === 'department' && (
                     <select className="sa-select" value={filterDepartmentId} onChange={e => setFilterDepartmentId(e.target.value)}>
-                      <option value="">{t('selectDepartment') || 'Select Department'}</option>
+                      <option value="">{t('allDepartments') || 'All Departments'}</option>
                       {deps.map(dep => <option key={dep._id} value={dep._id}>{dep.name}</option>)}
                     </select>
                   )}
+
+                  <select className="sa-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                    <option value="">{t('status') || 'Status'}: {t('any') || 'Any'}</option>
+                    <option value="pending">{t('pending') || 'Pending'}</option>
+                    <option value="in-progress">{t('inProgress') || 'In Progress'}</option>
+                    <option value="resolved">{t('resolved') || 'Resolved'}</option>
+                    <option value="completed">{t('completed') || 'Completed'}</option>
+                    <option value="rejected">{t('rejected') || 'Rejected'}</option>
+                  </select>
+
+                  <select className="sa-select" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
+                    <option value="">{t('priority') || 'Priority'}: {t('any') || 'Any'}</option>
+                    <option value="low">{t('priorityLow') || 'Low'}</option>
+                    <option value="medium">{t('priorityMedium') || 'Medium'}</option>
+                    <option value="high">{t('priorityHigh') || 'High'}</option>
+                    <option value="critical">{t('priorityCritical') || 'Critical'}</option>
+                  </select>
                 </div>
               </div>
 
-              {(complaintsFilterMode === 'urban' && filterUrbanSector) ||
-               (complaintsFilterMode === 'rural' && filterRuralJurisdiction) ||
-               (complaintsFilterMode === 'department' && filterDepartmentId) ? (
-                <div className="sa-list">
-                  {complaintsFiltered.length === 0 && (
-                    <div className="list-empty">{t('noData') || 'No data'}</div>
-                  )}
-                  {complaintsFiltered.map(c => (
-                    <div key={c._id} className="sa-list-item">
-                      <div className="sa-item-header">
-                        <div className="sa-item-title">[{c.department}] #{c.complaintId} - {c.category}</div>
-                        <span className={`status-badge status-${(c.status || '').replace(/\s+/g, '-')}`}>{c.status}</span>
-                      </div>
-                      {c.status === 'resolved' && (
-                        <div className="sa-item-actions">
-                          <button className="btn btn-warning" onClick={() => reopenComplaint(c._id)}>{t('reopen')}</button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+              <div className="sa-complaints-stats">
+                {(() => {
+                  const list = complaintsFiltered;
+                  const counts = {
+                    total: list.length,
+                    pending: list.filter(x => x.status === 'pending').length,
+                    inProgress: list.filter(x => x.status === 'in-progress').length,
+                    resolved: list.filter(x => x.status === 'resolved').length,
+                    rejected: list.filter(x => x.status === 'rejected').length
+                  };
+                  return (
+                    <>
+                      <div className="sa-chip"><span className="sa-chip-k">{t('total') || 'Total'}</span><span className="sa-chip-v">{counts.total}</span></div>
+                      <div className="sa-chip warn"><span className="sa-chip-k">{t('pending') || 'Pending'}</span><span className="sa-chip-v">{counts.pending}</span></div>
+                      <div className="sa-chip info"><span className="sa-chip-k">{t('inProgress') || 'In Progress'}</span><span className="sa-chip-v">{counts.inProgress}</span></div>
+                      <div className="sa-chip ok"><span className="sa-chip-k">{t('resolved') || 'Resolved'}</span><span className="sa-chip-v">{counts.resolved}</span></div>
+                      <div className="sa-chip danger"><span className="sa-chip-k">{t('rejected') || 'Rejected'}</span><span className="sa-chip-v">{counts.rejected}</span></div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              <div className="sa-complaints-stats">
+                {(() => {
+                  const list = complaintsFiltered;
+                  const feedbacks = list
+                    .map(c => c?.feedback)
+                    .filter(f => f && typeof f.sentiment === 'string');
+                  const positive = feedbacks.filter(f => String(f.sentiment || '').toLowerCase() === 'positive').length;
+                  const neutral = feedbacks.filter(f => String(f.sentiment || '').toLowerCase() === 'neutral').length;
+                  const negative = feedbacks.filter(f => String(f.sentiment || '').toLowerCase() === 'negative').length;
+                  const scores = feedbacks
+                    .map(f => (typeof f.sentimentScore === 'number' ? f.sentimentScore : null))
+                    .filter(v => typeof v === 'number');
+                  const avg = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+                  return (
+                    <>
+                      <div className="sa-chip"><span className="sa-chip-k">{t('feedbackResponses') || 'Feedback'}</span><span className="sa-chip-v">{feedbacks.length}</span></div>
+                      <div className="sa-chip ok"><span className="sa-chip-k">{t('positiveMood') || 'Positive'}</span><span className="sa-chip-v">{positive}</span></div>
+                      <div className="sa-chip info"><span className="sa-chip-k">{t('neutralMood') || 'Neutral'}</span><span className="sa-chip-v">{neutral}</span></div>
+                      <div className="sa-chip danger"><span className="sa-chip-k">{t('negativeMood') || 'Negative'}</span><span className="sa-chip-v">{negative}</span></div>
+                      <div className="sa-chip"><span className="sa-chip-k">{t('avgMoodScore') || 'Avg Score'}</span><span className="sa-chip-v">{typeof avg === 'number' ? avg.toFixed(2) : '—'}</span></div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              <div className="sa-complaints-layout">
+                <div className="sa-complaints-groups">
+                  <div className="sa-subhead">
+                    {complaintsFilterMode === 'urban'
+                      ? (t('sectors') || 'Sectors')
+                      : complaintsFilterMode === 'rural'
+                        ? (t('ruralJurisdictions') || 'Rural Jurisdictions')
+                        : (t('departments') || 'Departments')}
+                  </div>
+                  <div className="input-with-icon sa-group-search">
+                    <i className="fas fa-search input-icon"></i>
+                    <input
+                      className="sa-input sa-input-sm"
+                      placeholder={
+                        complaintsFilterMode === 'urban'
+                          ? (t('searchSector') || 'Search Sector')
+                          : complaintsFilterMode === 'rural'
+                            ? (t('searchJurisdiction') || 'Search Jurisdiction')
+                            : (t('searchDepartment') || 'Search Department')
+                      }
+                      value={complaintsGroupSearch}
+                      onChange={e => setComplaintsGroupSearch(e.target.value)}
+                    />
+                  </div>
+                  <div className="sa-group-list">
+                    {groupComplaints(complaintsFilterMode)
+                      .map(g => ({ ...g, count: Array.isArray(g.items) ? g.items.length : 0 }))
+                      .filter(g => {
+                        const q = String(complaintsGroupSearch || '').toLowerCase().trim();
+                        if (!q) return true;
+                        return String(g.label || '').toLowerCase().includes(q);
+                      })
+                      .sort((a, b) => b.count - a.count)
+                      .slice(0, complaintsGroupSearch ? 50 : 12)
+                      .map(g => (
+                        <button
+                          key={g.key}
+                          type="button"
+                          className="sa-group-item"
+                          onClick={() => {
+                            if (complaintsFilterMode === 'urban') setFilterUrbanSector(String(g.key || '') === 'Unknown Sector' ? '' : String(g.label || ''));
+                            if (complaintsFilterMode === 'rural') setFilterRuralJurisdiction(String(g.key || '') === 'Unknown Jurisdiction' ? '' : String(g.label || ''));
+                            if (complaintsFilterMode === 'department') {
+                              const dep = deps.find(d => String(d.name || '') === String(g.label || '')) || deps.find(d => String(d._id) === String(g.key));
+                              setFilterDepartmentId(dep?._id ? String(dep._id) : '');
+                            }
+                          }}
+                        >
+                          <span className="sa-group-name">{g.label}</span>
+                          <span className="sa-group-count">{g.count}</span>
+                        </button>
+                      ))}
+                  </div>
                 </div>
-              ) : (
-                <div className="sa-grid">
-                  {groupComplaints(complaintsFilterMode).map(group => (
-                    <div key={group.key} className="sa-panel premium">
-                      <div className="panel-header">
-                        <div className="sa-list-title">{group.label}</div>
-                        <div className="sa-code-badge">{group.items.length} {t('complaints') || 'Complaints'}</div>
-                      </div>
-                      <div className="sa-list">
-                        {group.items.slice(0, 5).map(c => (
-                          <div key={c._id} className="sa-list-item">
-                            <div className="sa-item-header">
-                              <div className="sa-item-title">[{c.department}] #{c.complaintId} - {c.category}</div>
-                              <span className={`status-badge status-${(c.status || '').replace(/\s+/g, '-')}`}>{c.status}</span>
-                            </div>
-                            {c.status === 'resolved' && (
-                              <div className="sa-item-actions">
-                                <button className="btn btn-outline" onClick={() => reopenComplaint(c._id)}>{t('reopen')}</button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                        {group.items.length > 5 && (
-                          <div className="list-empty">{t('andMore') || '… more complaints in this group'}</div>
+
+                <div className="sa-complaints-table">
+                  <div className="sa-table-wrap">
+                    <table className="sa-table">
+                      <thead>
+                        <tr>
+                          <th>{t('complaintId') || 'Complaint ID'}</th>
+                          <th>{t('category') || 'Category'}</th>
+                          <th>{t('department') || 'Department'}</th>
+                          <th>{t('areaType') || 'Area'}</th>
+                          <th>{t('status') || 'Status'}</th>
+                          <th>{t('priority') || 'Priority'}</th>
+                          <th>{t('feedbackMood') || 'Mood'}</th>
+                          <th>{t('date') || 'Date'}</th>
+                          <th>{t('action') || 'Action'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {complaintsFiltered.length === 0 ? (
+                          <tr>
+                            <td colSpan={9} className="sa-table-empty">{t('noData') || 'No data'}</td>
+                          </tr>
+                        ) : (
+                          complaintsFiltered
+                            .slice()
+                            .sort((a, b) => new Date(b.createdAt || b.updatedAt || 0) - new Date(a.createdAt || a.updatedAt || 0))
+                            .slice(0, 250)
+                            .map(c => {
+                              const depName = c.department || deps.find(d => String(d._id) === String(c.departmentId))?.name || '';
+                              const area = c.location?.areaType === 'Urban'
+                                ? `Urban • ${c.location?.sector || (t('allSectors') || 'All')}`
+                                : c.location?.areaType === 'Rural'
+                                  ? `Rural • ${c.location?.ruralJurisdiction || (t('allJurisdictions') || 'All')}`
+                                  : (t('any') || 'Any');
+                              const statusKey = String(c.status || '').replace(/\s+/g, '-').toLowerCase();
+                              const moodRaw = String(c?.feedback?.sentiment || '').toLowerCase();
+                              const moodScore = typeof c?.feedback?.sentimentScore === 'number' ? c.feedback.sentimentScore : null;
+                              const moodKey = moodRaw === 'positive' || moodRaw === 'negative' || moodRaw === 'neutral' ? moodRaw : '';
+                              return (
+                                <tr key={c._id}>
+                                  <td className="sa-mono">#{c.complaintId || c._id}</td>
+                                  <td>{c.category}</td>
+                                  <td>{depName || '-'}</td>
+                                  <td>{area}</td>
+                                  <td><span className={`sa-status-pill ${statusKey}`}>{c.status}</span></td>
+                                  <td><span className={`sa-priority-pill ${String(c.priority || '').toLowerCase()}`}>{c.priority || '-'}</span></td>
+                                  <td>
+                                    {moodKey ? (
+                                      <span className={`sa-mood-pill ${moodKey}`}>
+                                        {moodKey.toUpperCase()}{typeof moodScore === 'number' ? ` (${moodScore.toFixed(2)})` : ''}
+                                      </span>
+                                    ) : (
+                                      <span className="sa-muted">—</span>
+                                    )}
+                                  </td>
+                                  <td>{new Date(c.createdAt || c.updatedAt || Date.now()).toLocaleString()}</td>
+                                  <td>
+                                    {c.status === 'resolved' ? (
+                                      <button type="button" className="btn btn-outline btn-sm" onClick={() => reopenComplaint(c._id)}>
+                                        {t('reopen') || 'Reopen'}
+                                      </button>
+                                    ) : (
+                                      <span className="sa-muted">—</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })
                         )}
-                      </div>
-                    </div>
-                  ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {complaintsFiltered.length > 250 && (
+                    <div className="sa-table-note">{t('andMore') || 'Showing first 250 results. Refine filters to see more.'}</div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           </section>
         )}
@@ -2290,6 +2771,140 @@ const SuperAdminDashboard = () => {
                       <Bar dataKey="resolved" fill="#52c41a" name={t('resolved')} />
                     </BarChart>
                   </ResponsiveContainer>
+                </div>
+              </div>
+              <div className="sa-panel premium sa-report-panel" style={{ gridColumn: '1 / -1' }}>
+                <div className="sa-report-header">
+                  <div>
+                    <h4 className="section-subtitle">{t('reports') || 'Reports'}</h4>
+                    <div className="sa-report-subtitle">
+                      {t('generateDailyWeeklyMonthly') || 'Generate Daily, Weekly or Monthly PDF reports'}
+                    </div>
+                  </div>
+                  <div className="sa-report-actions">
+                    <button
+                      type="button"
+                      className={`btn btn-outline btn-sm ${reportPreset === 'daily' ? 'active' : ''}`}
+                      onClick={() => {
+                        setReportPreset('daily');
+                        const r = getPresetRange('daily');
+                        setReportFrom(r.from);
+                        setReportTo(r.to);
+                      }}
+                    >
+                      {t('daily') || 'Daily'}
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-outline btn-sm ${reportPreset === 'weekly' ? 'active' : ''}`}
+                      onClick={() => {
+                        setReportPreset('weekly');
+                        const r = getPresetRange('weekly');
+                        setReportFrom(r.from);
+                        setReportTo(r.to);
+                      }}
+                    >
+                      {t('weekly') || 'Weekly'}
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-outline btn-sm ${reportPreset === 'monthly' ? 'active' : ''}`}
+                      onClick={() => {
+                        setReportPreset('monthly');
+                        const r = getPresetRange('monthly');
+                        setReportFrom(r.from);
+                        setReportTo(r.to);
+                      }}
+                    >
+                      {t('monthly') || 'Monthly'}
+                    </button>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={generateReportPdf}>
+                      <i className="fas fa-file-pdf" style={{ marginRight: 8 }}></i>
+                      {t('generatePdf') || 'Generate PDF'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="sa-report-toolbar">
+                  <div className="sa-report-field">
+                    <div className="sa-report-label">{t('from') || 'From'}</div>
+                    <input className="sa-input sa-input-sm" type="date" value={reportFrom} onChange={e => setReportFrom(e.target.value)} />
+                  </div>
+                  <div className="sa-report-field">
+                    <div className="sa-report-label">{t('to') || 'To'}</div>
+                    <input className="sa-input sa-input-sm" type="date" value={reportTo} onChange={e => setReportTo(e.target.value)} />
+                  </div>
+                  <div className="sa-report-field grow">
+                    <div className="sa-report-label">{t('department') || 'Department'}</div>
+                    <select className="sa-select sa-input-sm" value={reportDepartmentId} onChange={e => setReportDepartmentId(e.target.value)}>
+                      <option value="">{t('allDepartments') || 'All Departments'}</option>
+                      {deps.map(dep => <option key={dep._id} value={dep._id}>{dep.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="sa-report-field">
+                    <div className="sa-report-label">{t('total') || 'Total'}</div>
+                    <div className="sa-report-kpi">{reportSummary.total}</div>
+                  </div>
+                </div>
+
+                <div className="sa-report-grid">
+                  <div className="sa-report-card">
+                    <div className="sa-report-card-title">{t('status') || 'Status'}</div>
+                    <div className="sa-report-mini">
+                      {Object.entries(reportSummary.byStatus || {})
+                        .map(([k, v]) => ({ key: k, count: v }))
+                        .sort((a, b) => b.count - a.count)
+                        .slice(0, 6)
+                        .map(x => (
+                          <div key={x.key} className="sa-report-mini-row">
+                            <div className="sa-report-mini-k">{t(x.key) || x.key}</div>
+                            <div className="sa-report-mini-v">{x.count}</div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  <div className="sa-report-card">
+                    <div className="sa-report-card-title">{t('topCategories') || 'Top Categories'}</div>
+                    <div className="sa-report-mini">
+                      {(reportSummary.topCategories || []).slice(0, 6).map(x => (
+                        <div key={x.key} className="sa-report-mini-row">
+                          <div className="sa-report-mini-k">{x.key}</div>
+                          <div className="sa-report-mini-v">{x.count}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="sa-report-card">
+                    <div className="sa-report-card-title">{t('topDepartments') || 'Top Departments'}</div>
+                    <div className="sa-report-mini">
+                      {(reportSummary.topDepartments || []).slice(0, 6).map(x => (
+                        <div key={x.key} className="sa-report-mini-row">
+                          <div className="sa-report-mini-k">{x.key}</div>
+                          <div className="sa-report-mini-v">{x.count}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="sa-report-card">
+                    <div className="sa-report-card-title">{t('areas') || 'Areas'}</div>
+                    <div className="sa-report-mini">
+                      {(reportSummary.topSectors || []).slice(0, 3).map(x => (
+                        <div key={`s-${x.key}`} className="sa-report-mini-row">
+                          <div className="sa-report-mini-k">{(t('sector') || 'Sector')}: {x.key}</div>
+                          <div className="sa-report-mini-v">{x.count}</div>
+                        </div>
+                      ))}
+                      {(reportSummary.topJurisdictions || []).slice(0, 3).map(x => (
+                        <div key={`j-${x.key}`} className="sa-report-mini-row">
+                          <div className="sa-report-mini-k">{(t('ruralJurisdiction') || 'Rural Jurisdiction')}: {x.key}</div>
+                          <div className="sa-report-mini-v">{x.count}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

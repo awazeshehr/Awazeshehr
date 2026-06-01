@@ -65,6 +65,21 @@
   padding: 16px;
   background: #ffffff;
 }
+.chat-closed-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  background: rgba(248, 250, 252, 0.95);
+  color: #0f172a;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+.chat-closed-banner i {
+  color: #64748b;
+}
 .date-divider { display: flex; align-items: center; gap: 10px; color: #6b7280; font-size: 0.75rem; margin: 8px 0 12px; }
 .date-divider::before, .date-divider::after { content: ""; flex: 1; height: 1px; background: #e5e7eb; }
 .chat-group {

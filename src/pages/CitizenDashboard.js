@@ -1,14 +1,26 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import dataService from '../services/dataService';
 import { useLanguage } from '../contexts/LanguageContext';
 import ComplaintChatPanel from '../components/ComplaintChatPanel';
 import { smartRewrite } from '../utils/smartRewriter';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis
+} from 'recharts';
 import './CitizenDashboard.css';
 
 const API_BASE_URL = dataService.apiBaseUrl;
-const SERVER_URL = API_BASE_URL.replace(/\/api\/?$/, '');
+const SERVER_URL = window.location.hostname.includes('vercel.app') 
+  ? 'https://backend-ui1u.onrender.com' 
+  : API_BASE_URL.replace(/\/api\/?$/, '');
+const BRAND_LOGO_URL = `${process.env.PUBLIC_URL}/awazeshehr.jpeg`;
 
 const getImageUrl = (url) => {
   if (!url) return '';
@@ -16,9 +28,12 @@ const getImageUrl = (url) => {
   return `${SERVER_URL}${url}`;
 };
 
+const CITIZEN_COMPLAINT_DRAFT_KEY = 'citizenComplaintDraft:v1';
+const CITIZEN_COMPLAINT_TOUR_SEEN_KEY = 'citizenComplaintTourSeen:v1';
+
 const CitizenDashboard = () => {
   const navigate = useNavigate();
-  const { t, language, toggleLanguage } = useLanguage();
+  const { t, language, toggleLanguage, setLanguage } = useLanguage();
   const [activePage, setActivePage] = useState('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 992);
@@ -42,11 +57,13 @@ const CitizenDashboard = () => {
   useEffect(() => {
     setChatMessages([
       {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         text: t('botGreeting'),
         sender: 'bot',
         quickReplies: [
           t('quickReplySubmit'),
           t('quickReplyStatus'),
+          t('quickReplyTrack'),
           t('quickReplyServices')
         ]
       }
@@ -70,6 +87,7 @@ const CitizenDashboard = () => {
   const [complaints, setComplaints] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [feedback, setFeedback] = useState({ rating: 5, comment: '' });
+  const [hoverRating, setHoverRating] = useState(0);
   const [dashboardStats, setDashboardStats] = useState({
     total: 0,
     pending: 0,
@@ -99,11 +117,35 @@ const CitizenDashboard = () => {
   const markerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const fileInputRef = useRef(null);
+  const stepElsRef = useRef({});
+  const geocodeSearchAbortRef = useRef(null);
+  const reverseGeocodeAbortRef = useRef(null);
+  const geocodeSearchCacheRef = useRef(new Map());
+  const reverseGeocodeCacheRef = useRef(new Map());
+  const reverseGeocodeDebounceRef = useRef(null);
+  const mapInitAttemptRef = useRef(0);
+  const suggestAbortRef = useRef(null);
+  const suggestDebounceRef = useRef(null);
+  const stepperRef = useRef(null);
+  const searchInputRef = useRef(null);
+  const mapWrapperRef = useRef(null);
+  const submitButtonRef = useRef(null);
+  const draftRestoredRef = useRef(false);
   const [locationQuery, setLocationQuery] = useState('');
   const [addressPreview, setAddressPreview] = useState('');
+  const [locationSuggestions, setLocationSuggestions] = useState([]);
+  const [showLocationSuggestions, setShowLocationSuggestions] = useState(false);
+  const [isLocationSuggesting, setIsLocationSuggesting] = useState(false);
+  const [mapState, setMapState] = useState({ status: 'idle', message: '' });
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourIndex, setTourIndex] = useState(0);
+  const [tourRect, setTourRect] = useState(null);
+  const [tourTooltipPos, setTourTooltipPos] = useState({ top: 0, left: 0, placement: 'bottom' });
   const [submissionFiles, setSubmissionFiles] = useState([]);
   const [description, setDescription] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
+  const [rewriteDone, setRewriteDone] = useState(false);
+  const [draftBanner, setDraftBanner] = useState('');
   const [areaType, setAreaType] = useState('Urban');
   const [sector, setSector] = useState('');
   const [ruralJurisdiction, setRuralJurisdiction] = useState('');
@@ -159,14 +201,16 @@ const CitizenDashboard = () => {
     if (selectedDepartmentId) {
       const dep = departments.find(d => d._id === selectedDepartmentId);
       if (dep) {
-        setAvailableServices(dep.servicesOffered || []);
-        setSelectedService(''); // Reset service selection
+        const nextServices = dep.servicesOffered || [];
+        setAvailableServices(nextServices);
+        if (selectedService && nextServices.includes(selectedService)) return;
+        setSelectedService('');
       }
     } else {
       setAvailableServices([]);
       setSelectedService('');
     }
-  }, [selectedDepartmentId, departments]);
+  }, [selectedDepartmentId, departments, selectedService]);
 
   useEffect(() => {
     const text = String(description || '').trim();
@@ -257,6 +301,253 @@ const CitizenDashboard = () => {
     }
   };
 
+  const showNotificationMessage = useCallback((message, type = 'success') => {
+    setNotificationMessage(message);
+    setNotificationType(type);
+    setShowNotification(true);
+    setTimeout(() => {
+      setShowNotification(false);
+    }, 5000);
+  }, []);
+
+  const refreshComplaintDetails = useCallback(async (complaintId) => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${dataService.apiBaseUrl}/complaints/${complaintId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setSelectedComplaint(data.complaint);
+      }
+    } catch (error) {
+      console.error('Error refreshing complaint details:', error);
+    }
+  }, []);
+
+  const loadComplaints = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${dataService.apiBaseUrl}/complaints/my-complaints`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setComplaints(data.complaints);
+      }
+    } catch (error) {
+      console.error('Error loading complaints:', error);
+      showNotificationMessage('Error loading complaints', 'error');
+    }
+  }, [showNotificationMessage]);
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${dataService.apiBaseUrl}/notifications`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setNotifications(data.notifications);
+        // Update unread count
+        const unreadCount = data.notifications.filter(n => !n.isRead).length;
+        setDashboardStats(prev => ({
+          ...prev,
+          unreadNotifications: unreadCount
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading notifications:', error);
+      showNotificationMessage('Error loading notifications', 'error');
+    }
+  }, [showNotificationMessage]);
+
+  const loadProfile = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${dataService.apiBaseUrl}/profile`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await response.json();
+      
+      if (data.success) {
+        const updatedUser = data.user;
+        setUser(updatedUser);
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+        
+        setProfileData({
+          fullName: updatedUser.fullName || '',
+          email: updatedUser.email || '',
+          phone: updatedUser.phone || '',
+          cnic: updatedUser.cnic || '',
+          address: updatedUser.address || {
+            street: '',
+            city: '',
+            postalCode: ''
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error loading profile:', error);
+      showNotificationMessage('Error loading profile data', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [showNotificationMessage]);
+
+  const loadSettings = useCallback(async () => {
+    // Load settings from localStorage or use defaults
+    const savedSettings = localStorage.getItem('userSettings');
+    if (savedSettings) {
+      const parsedSettings = JSON.parse(savedSettings);
+      setSettings(parsedSettings);
+      
+      // Apply theme on load
+      if (parsedSettings.theme === 'dark') {
+        document.body.classList.add('dark-theme');
+      } else {
+        document.body.classList.remove('dark-theme');
+      }
+    }
+    setIsLoading(false);
+  }, []);
+
+  const loadDashboardData = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      
+      const complaintsResponse = await fetch(`${dataService.apiBaseUrl}/complaints/my-complaints`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      const complaintsData = await complaintsResponse.json();
+
+      if (complaintsData.success) {
+        setComplaints(complaintsData.complaints || []);
+        
+        // Calculate stats from complaints
+        const currentComplaints = complaintsData.complaints || [];
+        const stats = {
+          total: currentComplaints.length,
+          pending: currentComplaints.filter(c => (c.status || '').toLowerCase() === 'pending').length,
+          inProgress: currentComplaints.filter(c => {
+            const s = (c.status || '').toLowerCase();
+            return s === 'in-progress' || s === 'progress';
+          }).length,
+          resolved: currentComplaints.filter(c => (c.status || '').toLowerCase() === 'resolved').length,
+          unreadNotifications: dashboardStats.unreadNotifications
+        };
+        console.log('Dashboard Stats Updated:', stats);
+        setDashboardStats(stats);
+      } else {
+        console.warn('Failed to load complaints for stats:', complaintsData.message);
+      }
+
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+      showNotificationMessage('Error loading dashboard data', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [dashboardStats.unreadNotifications, showNotificationMessage]);
+
+  const getAddressFromCoordinates = useCallback(async (lat, lng) => {
+    try {
+      const key = `${Number(lat).toFixed(5)},${Number(lng).toFixed(5)}`;
+      const cached = reverseGeocodeCacheRef.current.get(key);
+      if (cached) return cached;
+
+      const token = localStorage.getItem('token');
+      if (reverseGeocodeAbortRef.current) reverseGeocodeAbortRef.current.abort();
+      const controller = new AbortController();
+      reverseGeocodeAbortRef.current = controller;
+      const timeout = window.setTimeout(() => controller.abort(), 4500);
+      try {
+        const res = await fetch(
+          `${dataService.apiBaseUrl}/complaints/geocode/reverse?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`,
+          { headers: { 'Authorization': `Bearer ${token}` }, signal: controller.signal }
+        );
+        const data = await res.json().catch(() => null);
+        const addr = res.ok && data?.success && typeof data.address === 'string' ? data.address : '';
+        if (addr) reverseGeocodeCacheRef.current.set(key, addr);
+        return addr || 'Location not specified';
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    } catch (error) {
+      try {
+        const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&lat=${encodeURIComponent(String(lat))}&lon=${encodeURIComponent(String(lng))}`);
+        const data = await response.json().catch(() => null);
+        return data?.display_name || 'Location not specified';
+      } catch {
+        return 'Location not specified';
+      }
+    }
+  }, []);
+
+  const updateAddressPreviewFromLatLng = useCallback((lat, lng) => {
+    if (reverseGeocodeDebounceRef.current) {
+      window.clearTimeout(reverseGeocodeDebounceRef.current);
+      reverseGeocodeDebounceRef.current = null;
+    }
+    reverseGeocodeDebounceRef.current = window.setTimeout(async () => {
+      const addr = await getAddressFromCoordinates(lat, lng);
+      if (addr && addr !== 'Location not specified') {
+        setAddressPreview(addr);
+      }
+    }, 220);
+  }, [getAddressFromCoordinates]);
+
+  const initializeMap = useCallback(() => {
+    const L = window.L;
+    if (L && mapRef.current) {
+      const defaultLocation = [33.6844, 73.0479];
+      
+      mapInstanceRef.current = L.map(mapRef.current).setView(defaultLocation, 13);
+      
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(mapInstanceRef.current);
+      
+      // Add marker
+      markerRef.current = L.marker(defaultLocation, { draggable: true })
+        .addTo(mapInstanceRef.current)
+        .bindPopup('Drag to adjust complaint location')
+        .openPopup();
+      
+      // Add click event to map to move marker and update address
+      mapInstanceRef.current.on('click', async function(e) {
+        markerRef.current.setLatLng(e.latlng);
+        updateAddressPreviewFromLatLng(e.latlng.lat, e.latlng.lng);
+      });
+
+      // Update address preview when marker drag ends
+      markerRef.current.on('dragend', async function() {
+        const { lat, lng } = markerRef.current.getLatLng();
+        updateAddressPreviewFromLatLng(lat, lng);
+      });
+      setAddressPreview('');
+      setMapState({ status: 'ready', message: '' });
+      window.setTimeout(() => {
+        try {
+          mapInstanceRef.current?.invalidateSize?.();
+        } catch {}
+      }, 120);
+      window.setTimeout(() => {
+        try {
+          mapInstanceRef.current?.invalidateSize?.();
+        } catch {}
+      }, 700);
+    }
+  }, [updateAddressPreviewFromLatLng]);
+
   // Check authentication and load user data
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -318,7 +609,7 @@ const CitizenDashboard = () => {
     return () => {
       socket.disconnect();
     };
-  }, [user]);
+  }, [user, loadDashboardData, loadComplaints, loadNotifications, refreshComplaintDetails]);
 
   // Load dashboard data based on active page
   useEffect(() => {
@@ -343,231 +634,166 @@ const CitizenDashboard = () => {
           break;
       }
     }
-  }, [activePage, user]);
+  }, [activePage, user, loadDashboardData, loadComplaints, loadNotifications, loadProfile, loadSettings]);
 
   // Initialize map when component mounts
   useEffect(() => {
-    if (activePage === 'submit-complaint' && mapRef.current && !mapInstanceRef.current) {
-      initializeMap();
-    }
-  }, [activePage]);
+    if (activePage !== 'submit-complaint') return;
+    if (!mapRef.current) return;
 
-  const initializeMap = () => {
-    const L = window.L;
-    if (L && mapRef.current) {
-      // Set default location to Karachi
-      const defaultLocation = [24.8607, 67.0011];
-      
-      mapInstanceRef.current = L.map(mapRef.current).setView(defaultLocation, 13);
-      
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-      }).addTo(mapInstanceRef.current);
-      
-      // Add marker
-      markerRef.current = L.marker(defaultLocation, { draggable: true })
-        .addTo(mapInstanceRef.current)
-        .bindPopup('Drag to adjust complaint location')
-        .openPopup();
-      
-      // Add click event to map to move marker and update address
-      mapInstanceRef.current.on('click', async function(e) {
-        markerRef.current.setLatLng(e.latlng);
-        const addr = await getAddressFromCoordinates(e.latlng.lat, e.latlng.lng);
-        setAddressPreview(addr);
-      });
-
-      // Update address preview when marker drag ends
-      markerRef.current.on('dragend', async function() {
-        const { lat, lng } = markerRef.current.getLatLng();
-        const addr = await getAddressFromCoordinates(lat, lng);
-        setAddressPreview(addr);
-      });
-      // Initialize address preview
-      (async () => {
-        const addr = await getAddressFromCoordinates(defaultLocation[0], defaultLocation[1]);
-        setAddressPreview(addr);
-      })();
-    }
-  };
-
-  const loadDashboardData = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      
-      const complaintsResponse = await fetch(`${dataService.apiBaseUrl}/complaints/my-complaints`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      const complaintsData = await complaintsResponse.json();
-
-      if (complaintsData.success) {
-        setComplaints(complaintsData.complaints || []);
-        
-        // Calculate stats from complaints
-        const currentComplaints = complaintsData.complaints || [];
-        const stats = {
-          total: currentComplaints.length,
-          pending: currentComplaints.filter(c => (c.status || '').toLowerCase() === 'pending').length,
-          inProgress: currentComplaints.filter(c => {
-            const s = (c.status || '').toLowerCase();
-            return s === 'in-progress' || s === 'progress';
-          }).length,
-          resolved: currentComplaints.filter(c => (c.status || '').toLowerCase() === 'resolved').length,
-          unreadNotifications: dashboardStats.unreadNotifications
-        };
-        console.log('Dashboard Stats Updated:', stats);
-        setDashboardStats(stats);
-      } else {
-        console.warn('Failed to load complaints for stats:', complaintsData.message);
-      }
-
-    } catch (error) {
-      console.error('Error loading dashboard data:', error);
-      showNotificationMessage('Error loading dashboard data', 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const refreshComplaintDetails = async (complaintId) => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${dataService.apiBaseUrl}/complaints/${complaintId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        setSelectedComplaint(data.complaint);
-      }
-    } catch (error) {
-      console.error('Error refreshing complaint details:', error);
-    }
-  };
-
-  const loadComplaints = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${dataService.apiBaseUrl}/complaints/my-complaints`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        setComplaints(data.complaints);
-      }
-    } catch (error) {
-      console.error('Error loading complaints:', error);
-      showNotificationMessage('Error loading complaints', 'error');
-    }
-  };
-
-  const loadNotifications = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${dataService.apiBaseUrl}/notifications`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      const data = await response.json();
-      if (data.success) {
-        setNotifications(data.notifications);
-        // Update unread count
-        const unreadCount = data.notifications.filter(n => !n.isRead).length;
-        setDashboardStats(prev => ({
-          ...prev,
-          unreadNotifications: unreadCount
-        }));
-      }
-    } catch (error) {
-      console.error('Error loading notifications:', error);
-      showNotificationMessage('Error loading notifications', 'error');
-    }
-  };
-
-  const loadProfile = async () => {
-    setIsLoading(true);
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${dataService.apiBaseUrl}/profile`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      const data = await response.json();
-      
-      if (data.success) {
-        const updatedUser = data.user;
-        setUser(updatedUser);
-        localStorage.setItem('user', JSON.stringify(updatedUser));
-        
-        setProfileData({
-          fullName: updatedUser.fullName || '',
-          email: updatedUser.email || '',
-          phone: updatedUser.phone || '',
-          cnic: updatedUser.cnic || '',
-          address: updatedUser.address || {
-            street: '',
-            city: '',
-            postalCode: ''
-          }
-        });
-      }
-    } catch (error) {
-      console.error('Error loading profile:', error);
-      showNotificationMessage('Error loading profile data', 'error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const loadSettings = async () => {
-    // Load settings from localStorage or use defaults
-    const savedSettings = localStorage.getItem('userSettings');
-    if (savedSettings) {
-      setSettings(JSON.parse(savedSettings));
-    }
-    setIsLoading(false);
-  };
-
-  const showNotificationMessage = (message, type = 'success') => {
-    setNotificationMessage(message);
-    setNotificationType(type);
-    setShowNotification(true);
-    setTimeout(() => {
-      setShowNotification(false);
-    }, 5000);
-  };
-
-  const handleGetLocation = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
-          
-          if (mapInstanceRef.current && markerRef.current) {
-            mapInstanceRef.current.setView([lat, lng], 15);
-            markerRef.current.setLatLng([lat, lng]);
-            showNotificationMessage('Location updated successfully!');
-          }
-        },
-        (error) => {
-          console.error('Geolocation error:', error);
-          showNotificationMessage('Unable to get your location. Please make sure location services are enabled.', 'error');
-        }
-      );
-    } else {
-      showNotificationMessage('Geolocation is not supported by your browser.', 'error');
-    }
-  };
-
-  const handleRewriteDescription = async () => {
-    if (!description || !description.trim()) {
-      showNotificationMessage(t('fillAllFields'), 'error');
+    if (mapInstanceRef.current) {
+      window.setTimeout(() => {
+        try {
+          mapInstanceRef.current?.invalidateSize?.();
+        } catch {}
+      }, 120);
       return;
     }
+
+    setMapState({ status: 'loading', message: '' });
+    mapInitAttemptRef.current += 1;
+    const attemptId = mapInitAttemptRef.current;
+
+    let tries = 0;
+    const tick = () => {
+      if (attemptId !== mapInitAttemptRef.current) return;
+      if (mapInstanceRef.current) return;
+
+      const L = window.L;
+      if (L) {
+        try {
+          initializeMap();
+        } catch {
+          setMapState({ status: 'error', message: 'Map failed to initialize' });
+        }
+        return;
+      }
+
+      tries += 1;
+      if (tries >= 25) {
+        setMapState({ status: 'error', message: 'Map library not loaded' });
+        return;
+      }
+      window.setTimeout(tick, 180);
+    };
+
+    tick();
+  }, [activePage, initializeMap]);
+
+  useEffect(() => {
+    if (activePage !== 'submit-complaint') return;
+    if (!mapInstanceRef.current) return;
+    window.setTimeout(() => {
+      try {
+        mapInstanceRef.current?.invalidateSize?.();
+      } catch {}
+    }, 180);
+  }, [activePage, sidebarCollapsed, sidebarMobileOpen]);
+
+  useEffect(() => {
+    if (activePage !== 'submit-complaint') return;
+
+    const q = String(locationQuery || '').trim();
+    if (q.length < 3) {
+      if (suggestAbortRef.current) suggestAbortRef.current.abort();
+      if (suggestDebounceRef.current) window.clearTimeout(suggestDebounceRef.current);
+      setLocationSuggestions([]);
+      setShowLocationSuggestions(false);
+      setIsLocationSuggesting(false);
+      return;
+    }
+
+    if (suggestAbortRef.current) suggestAbortRef.current.abort();
+    const controller = new AbortController();
+    suggestAbortRef.current = controller;
+    if (suggestDebounceRef.current) window.clearTimeout(suggestDebounceRef.current);
+
+    suggestDebounceRef.current = window.setTimeout(async () => {
+      setIsLocationSuggesting(true);
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(
+          `${dataService.apiBaseUrl}/complaints/geocode/search?q=${encodeURIComponent(q)}&limit=5`,
+          { headers: { 'Authorization': `Bearer ${token}` }, signal: controller.signal }
+        );
+        const data = await res.json().catch(() => null);
+        const results = Array.isArray(data?.results) ? data.results : [];
+        setLocationSuggestions(results);
+        setShowLocationSuggestions(true);
+      } catch {
+        setLocationSuggestions([]);
+        setShowLocationSuggestions(false);
+      } finally {
+        setIsLocationSuggesting(false);
+      }
+    }, 260);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(suggestDebounceRef.current);
+    };
+  }, [activePage, locationQuery]);
+
+  // Restore draft only once when entering the submit page
+  useEffect(() => {
+    if (activePage !== 'submit-complaint') return;
+    
+    // Use a ref to ensure we only restore once per session/navigation
+    if (draftRestoredRef.current) return;
+
+    try {
+      const raw = localStorage.getItem(CITIZEN_COMPLAINT_DRAFT_KEY);
+      if (!raw) {
+        draftRestoredRef.current = true;
+        return;
+      }
+      const parsed = JSON.parse(raw);
+
+      if (typeof parsed?.description === 'string' && !description) setDescription(parsed.description);
+      if (typeof parsed?.selectedDepartmentId === 'string' && !selectedDepartmentId) setSelectedDepartmentId(parsed.selectedDepartmentId);
+      if (typeof parsed?.selectedService === 'string' && !selectedService) setSelectedService(parsed.selectedService);
+      if (typeof parsed?.areaType === 'string') setAreaType(parsed.areaType);
+      if (typeof parsed?.sector === 'string' && !sector) setSector(parsed.sector);
+      if (typeof parsed?.ruralJurisdiction === 'string' && !ruralJurisdiction) setRuralJurisdiction(parsed.ruralJurisdiction);
+      if (typeof parsed?.locationQuery === 'string' && !locationQuery) setLocationQuery(parsed.locationQuery);
+
+      setDraftBanner(t('Draft restored') || 'Draft restored');
+      window.setTimeout(() => setDraftBanner(''), 2500);
+      draftRestoredRef.current = true;
+    } catch (e) {
+      console.error('Error restoring draft:', e);
+      draftRestoredRef.current = true;
+    }
+  }, [activePage, t]); // Removed description and other dependencies that caused re-triggering on clear/delete
+
+  useEffect(() => {
+    if (activePage !== 'submit-complaint') return;
+    try {
+      const payload = {
+        description,
+        selectedDepartmentId,
+        selectedService,
+        areaType,
+        sector,
+        ruralJurisdiction,
+        locationQuery
+      };
+      localStorage.setItem(CITIZEN_COMPLAINT_DRAFT_KEY, JSON.stringify(payload));
+    } catch {
+    }
+  }, [
+    activePage,
+    areaType,
+    description,
+    locationQuery,
+    ruralJurisdiction,
+    sector,
+    selectedDepartmentId,
+    selectedService
+  ]);
+
+  const handleRewriteDescription = async () => {
+    if (!description || !description.trim()) return;
     
     setIsRewriting(true);
     
@@ -576,7 +802,8 @@ const CitizenDashboard = () => {
       const improved = smartRewrite(description);
       setDescription(improved);
       setIsRewriting(false);
-      showNotificationMessage('Description enhanced successfully', 'success');
+      setRewriteDone(true);
+      window.setTimeout(() => setRewriteDone(false), 1500);
     }, 1000);
   };
 
@@ -648,8 +875,8 @@ const CitizenDashboard = () => {
         // Update dashboard stats
         setDashboardStats(prev => ({
           ...prev,
-          totalComplaints: (prev.totalComplaints || 0) + 1,
-          pendingComplaints: (prev.pendingComplaints || 0) + 1
+          total: (prev.total || 0) + 1,
+          pending: (prev.pending || 0) + 1
         }));
 
         // Show success modal
@@ -679,34 +906,50 @@ const CitizenDashboard = () => {
     }
   };
 
-  const getAddressFromCoordinates = async (lat, lng) => {
-    try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`, {
-        headers: {
-          'User-Agent': 'AwazEShehrWeb/1.0',
-          'Accept': 'application/json'
-        }
-      });
-      const data = await response.json();
-      return data.display_name || 'Location not specified';
-    } catch (error) {
-      console.error('Error getting address:', error);
-      return 'Location not specified';
-    }
-  };
-
   const getCoordinatesFromQuery = async (query) => {
     try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`, {
-        headers: {
-          'User-Agent': 'AwazEShehrWeb/1.0',
-          'Accept': 'application/json'
+      const q = String(query || '').trim();
+      if (!q) return null;
+
+      const m = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+      if (m) {
+        const lat = Number(m[1]);
+        const lng = Number(m[2]);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng, address: '' };
+      }
+
+      const cacheKey = q.toLowerCase();
+      const cached = geocodeSearchCacheRef.current.get(cacheKey);
+      if (cached) return cached;
+
+      const token = localStorage.getItem('token');
+      if (geocodeSearchAbortRef.current) geocodeSearchAbortRef.current.abort();
+      const controller = new AbortController();
+      geocodeSearchAbortRef.current = controller;
+      const timeout = window.setTimeout(() => controller.abort(), 4500);
+      try {
+        const res = await fetch(
+          `${dataService.apiBaseUrl}/complaints/geocode/search?q=${encodeURIComponent(q)}&limit=1`,
+          { headers: { 'Authorization': `Bearer ${token}` }, signal: controller.signal }
+        );
+        const data = await res.json().catch(() => null);
+        const first = Array.isArray(data?.results) ? data.results[0] : null;
+        if (res.ok && data?.success && first && Number.isFinite(first.lat) && Number.isFinite(first.lng)) {
+          const out = { lat: Number(first.lat), lng: Number(first.lng), address: String(first.address || '') };
+          geocodeSearchCacheRef.current.set(cacheKey, out);
+          return out;
         }
-      });
-      const data = await response.json();
-      if (Array.isArray(data) && data.length > 0) {
-        const { lat, lon, display_name } = data[0];
-        return { lat: parseFloat(lat), lng: parseFloat(lon), address: display_name };
+      } finally {
+        window.clearTimeout(timeout);
+      }
+
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&addressdetails=1&countrycodes=pk&q=${encodeURIComponent(q)}`);
+      const data2 = await response.json().catch(() => null);
+      if (Array.isArray(data2) && data2.length > 0) {
+        const { lat, lon, display_name } = data2[0];
+        const out = { lat: parseFloat(lat), lng: parseFloat(lon), address: display_name };
+        geocodeSearchCacheRef.current.set(cacheKey, out);
+        return out;
       }
       return null;
     } catch (error) {
@@ -725,22 +968,47 @@ const CitizenDashboard = () => {
       if (mapInstanceRef.current && markerRef.current) {
         markerRef.current.setLatLng([latitude, longitude]);
         mapInstanceRef.current.setView([latitude, longitude], 16);
-        const addr = await getAddressFromCoordinates(latitude, longitude);
-        setAddressPreview(addr);
+        updateAddressPreviewFromLatLng(latitude, longitude);
       }
     }, () => {
       showNotificationMessage('Unable to retrieve your location', 'error');
     }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
   };
 
+  const handlePickSuggestion = useCallback((s) => {
+    const lat = Number(s?.lat);
+    const lng = Number(s?.lng);
+    const address = String(s?.address || '').trim();
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    if (mapInstanceRef.current && markerRef.current) {
+      markerRef.current.setLatLng([lat, lng]);
+      mapInstanceRef.current.setView([lat, lng], 16);
+    }
+    if (address) {
+      setAddressPreview(address);
+    } else {
+      updateAddressPreviewFromLatLng(lat, lng);
+    }
+    setLocationQuery(address || `${lat}, ${lng}`);
+    setShowLocationSuggestions(false);
+  }, [updateAddressPreviewFromLatLng]);
+
   const handleSearchLocation = async (e) => {
     e.preventDefault();
     if (!locationQuery.trim()) return;
+    if (locationSuggestions.length > 0 && showLocationSuggestions) {
+      handlePickSuggestion(locationSuggestions[0]);
+      return;
+    }
     const result = await getCoordinatesFromQuery(locationQuery.trim());
     if (result && mapInstanceRef.current && markerRef.current) {
       markerRef.current.setLatLng([result.lat, result.lng]);
       mapInstanceRef.current.setView([result.lat, result.lng], 16);
-      setAddressPreview(result.address || '');
+      if (result.address) {
+        setAddressPreview(result.address);
+      } else {
+        updateAddressPreviewFromLatLng(result.lat, result.lng);
+      }
     } else {
       showNotificationMessage('Location not found. Try a different search.', 'error');
     }
@@ -812,17 +1080,28 @@ const CitizenDashboard = () => {
   const handleSettingsSave = async () => {
     try {
       localStorage.setItem('userSettings', JSON.stringify(settings));
-      showNotificationMessage('Settings saved successfully!');
       
+      // Update Language context if changed in settings
+      if (settings.language !== language) {
+        setLanguage(settings.language);
+        localStorage.setItem('language', settings.language);
+      }
+
       // Apply theme
       if (settings.theme === 'dark') {
         document.body.classList.add('dark-theme');
       } else {
         document.body.classList.remove('dark-theme');
       }
+
+      setNotificationType('success');
+      setNotificationMessage('Settings saved successfully!');
+      setShowNotification(true);
     } catch (error) {
       console.error('Error saving settings:', error);
-      showNotificationMessage('Failed to save settings.', 'error');
+      setNotificationType('error');
+      setNotificationMessage('Failed to save settings.');
+      setShowNotification(true);
     }
   };
 
@@ -862,76 +1141,146 @@ const CitizenDashboard = () => {
     }
   };
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim()) return;
+  const createChatId = useCallback(() => `${Date.now()}-${Math.random().toString(16).slice(2)}`, []);
 
-    const userMessage = {
-      text: newMessage,
-      sender: 'user'
-    };
+  const extractComplaintIdFromText = useCallback((input) => {
+    const text = String(input || '').replace(/#/g, ' ').trim();
+    const m1 = text.match(/\b\d{3}-\d{2}-\d{3,}\b/i);
+    if (m1) return m1[0];
+    const m2 = text.match(/\b[A-Z]{2,4}\/[A-Z]{2,4}\/\d{4}\/\d+\b/i);
+    if (m2) return m2[0];
+    const m3 = text.match(/\bKHI\/GEN\/\d{4}\/\d+\b/i);
+    if (m3) return m3[0];
+    return null;
+  }, []);
 
-    setChatMessages(prev => [...prev, userMessage]);
-    setNewMessage('');
+  const formatStatusForChat = useCallback((status) => {
+    const s = String(status || '').toLowerCase();
+    if (s === 'pending') return t('pending');
+    if (s === 'assigned') return 'Assigned';
+    if (s === 'in-progress' || s === 'progress') return t('inProgress');
+    if (s === 'resolved' || s === 'completed') return t('resolved');
+    if (s === 'rejected') return t('rejected');
+    return status || '';
+  }, [t]);
 
-    // Simulate bot response
-    setTimeout(() => {
-      generateBotResponse(newMessage);
-    }, 1000);
-  };
+  const fetchComplaintTracking = useCallback(async (complaintId) => {
+    const token = localStorage.getItem('token');
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const res = await fetch(`${dataService.apiBaseUrl}/complaints/track/${encodeURIComponent(complaintId)}`, { headers });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.success) return null;
+    return data?.complaint || null;
+  }, []);
 
-  const handleQuickReply = (reply) => {
-    const userMessage = {
-      text: reply,
-      sender: 'user'
-    };
+  const updateBotMessage = useCallback((botMessageId, next) => {
+    setChatMessages(prev => prev.map(m => (m.id === botMessageId ? { ...m, ...next } : m)));
+  }, []);
 
-    setChatMessages(prev => [...prev, userMessage]);
-    generateBotResponse(reply);
-  };
-
-  const generateBotResponse = (userMessage) => {
+  const generateBotResponse = useCallback(async (userInput, botMessageId) => {
     let response = '';
-    
-    // Logic matched with mobile app
-    userMessage = userMessage.toLowerCase();
-    
-    // Check against translated quick reply texts and keywords
-    const isSubmitQuery = userMessage.includes('submit') || 
-                         userMessage.includes('شکایت') ||
-                         userMessage.includes(t('quickReplySubmit').toLowerCase());
+    const raw = String(userInput || '');
+    const lowerMsg = raw.toLowerCase();
 
-    const isStatusQuery = userMessage.includes('status') || 
-                         userMessage.includes('check') || 
-                         userMessage.includes('حیثیت') ||
-                         userMessage.includes(t('quickReplyStatus').toLowerCase());
+    const isSubmitQuery =
+      lowerMsg.includes('submit') ||
+      lowerMsg.includes('report') ||
+      lowerMsg.includes('issue') ||
+      lowerMsg.includes('شکایت') ||
+      lowerMsg.includes(String(t('quickReplySubmit') || '').toLowerCase());
 
-    const isServiceQuery = userMessage.includes('service') || 
-                          userMessage.includes('available') || 
-                          userMessage.includes('خدمات') ||
-                          userMessage.includes(t('quickReplyServices').toLowerCase());
+    const isStatusQuery =
+      lowerMsg.includes('status') ||
+      lowerMsg.includes('check') ||
+      lowerMsg.includes('حیثیت') ||
+      lowerMsg.includes(String(t('quickReplyStatus') || '').toLowerCase());
 
-    // Check if message contains a complaint ID
-    const foundComplaint = complaints.find(c => userMessage.includes(c.complaintId.toLowerCase()));
+    const isTrackQuery =
+      lowerMsg.includes('track') ||
+      lowerMsg.includes('complaint id') ||
+      lowerMsg.includes('آئی') ||
+      lowerMsg.includes(String(t('quickReplyTrack') || '').toLowerCase());
 
-    if (foundComplaint) {
-      response = `${t('complaintId')}: ${foundComplaint.complaintId}\n${t('status')}: ${foundComplaint.status}\n${t('category')}: ${foundComplaint.category}`;
+    const isServiceQuery =
+      lowerMsg.includes('service') ||
+      lowerMsg.includes('available') ||
+      lowerMsg.includes('خدمات') ||
+      lowerMsg.includes(String(t('quickReplyServices') || '').toLowerCase());
+
+    const extractedId = extractComplaintIdFromText(raw);
+    if (extractedId) {
+      const normalized = extractedId.replace(/^#/, '').trim();
+      const local = (complaints || []).find(c => String(c?.complaintId || '').toLowerCase() === normalized.toLowerCase());
+      const tracked = local
+        ? {
+            complaintId: local.complaintId,
+            status: local.status,
+            category: local.category,
+            updatedAt: local.updatedAt || local.createdAt
+          }
+        : await fetchComplaintTracking(normalized);
+
+      if (tracked) {
+        const updatedAt = tracked.updatedAt ? new Date(tracked.updatedAt).toLocaleString() : '';
+        response =
+          `${t('complaintId')}: ${tracked.complaintId}\n` +
+          `${t('status')}: ${formatStatusForChat(tracked.status)}\n` +
+          `${t('category')}: ${tracked.category || '-'}` +
+          (updatedAt ? `\nLast Updated: ${updatedAt}` : '');
+      } else {
+        response = t('botTrackNotFound') || "I couldn't find a complaint with that ID. Please double-check and try again.";
+      }
+    } else if (isTrackQuery || isStatusQuery) {
+      response = t('botTrackPrompt') || 'Send your Complaint ID (e.g., 123-26-001) and I will check the latest status.';
     } else if (isSubmitQuery) {
       response = t('botSubmitResponse');
-    } else if (isStatusQuery) {
-      response = t('botStatusResponse');
     } else if (isServiceQuery) {
       response = t('botServiceResponse');
     } else {
       response = t('botDefaultResponse');
     }
 
-    const botMessage = {
-      text: response,
-      sender: 'bot'
-      // No quick replies in follow-up messages to match mobile app behavior
+    updateBotMessage(botMessageId, { text: response, sender: 'bot' });
+  }, [complaints, extractComplaintIdFromText, fetchComplaintTracking, formatStatusForChat, t, updateBotMessage]);
+
+  const handleSendMessage = () => {
+    const text = String(newMessage || '').trim();
+    if (!text) return;
+
+    const userMessage = {
+      id: createChatId(),
+      text: text,
+      sender: 'user'
     };
 
-    setChatMessages(prev => [...prev, botMessage]);
+    const botMessageId = createChatId();
+    const typingText = (t('Typing...') || 'Typing...') + '';
+    const botTyping = { id: botMessageId, text: typingText, sender: 'bot' };
+
+    setChatMessages(prev => [...prev, userMessage, botTyping]);
+    setNewMessage('');
+
+    setTimeout(() => {
+      generateBotResponse(text, botMessageId);
+    }, 250);
+  };
+
+  const handleQuickReply = (reply) => {
+    const text = String(reply || '').trim();
+    if (!text) return;
+
+    const userMessage = {
+      id: createChatId(),
+      text: text,
+      sender: 'user'
+    };
+
+    const botMessageId = createChatId();
+    const typingText = (t('Typing...') || 'Typing...') + '';
+    const botTyping = { id: botMessageId, text: typingText, sender: 'bot' };
+
+    setChatMessages(prev => [...prev, userMessage, botTyping]);
+    generateBotResponse(text, botMessageId);
   };
 
   const handleLogout = () => {
@@ -952,7 +1301,7 @@ const CitizenDashboard = () => {
     
     const statusText = {
       'pending': t('pending'),
-      'assigned': 'Assigned',
+      'assigned': t('assigned') || 'Assigned',
       'in-progress': t('inProgress'),
       'resolved': t('resolved'),
       'rejected': t('rejected')
@@ -968,6 +1317,313 @@ const CitizenDashboard = () => {
       year: 'numeric'
     });
   };
+
+  const complaintsTrendData = useMemo(() => {
+    const now = new Date();
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleString('en-US', { month: 'short' });
+      months.push({ key, month: label, total: 0 });
+    }
+
+    const bucketByKey = new Map(months.map(m => [m.key, m]));
+    for (const c of complaints || []) {
+      const createdAt = c?.createdAt ? new Date(c.createdAt) : null;
+      if (!createdAt || Number.isNaN(createdAt.getTime())) continue;
+      const key = `${createdAt.getFullYear()}-${String(createdAt.getMonth() + 1).padStart(2, '0')}`;
+      const bucket = bucketByKey.get(key);
+      if (!bucket) continue;
+      bucket.total += 1;
+    }
+
+    return months;
+  }, [complaints]);
+
+  const submitComplaintSteps = useMemo(() => {
+    const desc = String(description || '').trim();
+    const step1Done = desc.length >= 20;
+
+    const step2Done =
+      !selectedDepartmentId ||
+      (Boolean(selectedDepartmentId) && String(selectedService || '').trim().length > 0);
+
+    const step3Done = (submissionFiles || []).length > 0;
+    const step4Done = String(addressPreview || '').trim().length > 0;
+
+    const selectedDepartmentName = selectedDepartmentId
+      ? (departments.find(d => String(d._id) === String(selectedDepartmentId))?.name || '')
+      : '';
+
+    const areaMeta = areaType === 'Urban'
+      ? (sector ? `Urban • ${sector}` : 'Urban')
+      : (ruralJurisdiction ? `Rural • ${ruralJurisdiction}` : 'Rural');
+
+    const addrShort = String(addressPreview || '').trim()
+      ? String(addressPreview).split(',').slice(0, 2).join(',').trim()
+      : '';
+
+    return [
+      {
+        id: 1,
+        label: t('describeIssueTitle'),
+        icon: 'fa-pen',
+        done: step1Done,
+        meta: desc.length > 0 ? `${Math.min(desc.length, 20)}/20` : (t('Add details') || 'Add details')
+      },
+      {
+        id: 2,
+        label: t('department') || 'Department',
+        icon: 'fa-building',
+        done: step2Done,
+        meta: selectedDepartmentId
+          ? (String(selectedService || '').trim()
+              ? (selectedDepartmentName ? `${selectedDepartmentName} • ${selectedService}` : (t('Service selected') || 'Service selected'))
+              : (t('Select service') || 'Select service'))
+          : (t('Auto-route') || 'Auto-route')
+      },
+      {
+        id: 3,
+        label: t('addEvidenceTitle'),
+        icon: 'fa-paperclip',
+        done: step3Done,
+        optional: true,
+        meta: step3Done ? `${(submissionFiles || []).length} ${t('files') || 'files'}` : (t('Optional') || 'Optional')
+      },
+      {
+        id: 4,
+        label: t('setLocationTitle'),
+        icon: 'fa-map-marker-alt',
+        done: step4Done,
+        meta: step4Done
+          ? (addrShort ? `${areaMeta} • ${addrShort}` : areaMeta)
+          : (t('Pin location') || 'Pin location')
+      }
+    ];
+  }, [
+    addressPreview,
+    areaType,
+    departments,
+    description,
+    ruralJurisdiction,
+    sector,
+    selectedDepartmentId,
+    selectedService,
+    submissionFiles,
+    t
+  ]);
+
+  const submitComplaintProgress = useMemo(() => {
+    const required = submitComplaintSteps.filter(s => !s.optional);
+    const total = required.length;
+    const doneCount = required.filter(s => s.done).length;
+    return total > 0 ? Math.round((doneCount / total) * 100) : 0;
+  }, [submitComplaintSteps]);
+
+  const nextIncompleteStep = useMemo(() => {
+    return submitComplaintSteps.find(s => !s.optional && !s.done) || null;
+  }, [submitComplaintSteps]);
+
+  const scrollToStep = useCallback((id) => {
+    const el = stepElsRef.current?.[id];
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  const handleGoToNextIncomplete = useCallback(() => {
+    const next = submitComplaintSteps.find(s => !s.optional && !s.done);
+    if (next) {
+      scrollToStep(next.id);
+      return;
+    }
+    scrollToStep(99);
+  }, [scrollToStep, submitComplaintSteps]);
+
+  const handleClearDraft = useCallback(() => {
+    setDescription('');
+    setSelectedDepartmentId('');
+    setSelectedService('');
+    setSubmissionFiles([]);
+    setLocationQuery('');
+    setSector('');
+    setRuralJurisdiction('');
+    setDepartmentManuallySelected(false);
+    setRoutingRecommendation(null);
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    try {
+      const defaultLocation = [33.6844, 73.0479];
+      if (mapInstanceRef.current && typeof mapInstanceRef.current.setView === 'function') {
+        mapInstanceRef.current.setView(defaultLocation, 13);
+      }
+      if (markerRef.current && typeof markerRef.current.setLatLng === 'function') {
+        markerRef.current.setLatLng(defaultLocation);
+      }
+    } catch {
+    }
+    setAddressPreview('');
+
+    try {
+      localStorage.removeItem(CITIZEN_COMPLAINT_DRAFT_KEY);
+    } catch {
+    }
+
+    setDraftBanner(t('Draft cleared') || 'Draft cleared');
+    window.setTimeout(() => setDraftBanner(''), 1800);
+    scrollToStep(1);
+  }, [scrollToStep, t]);
+
+  const tourSteps = useMemo(() => {
+    return [
+      {
+        key: 'stepper',
+        title: t('Guided Tour') || 'Guided Tour',
+        body: t('This tour will guide you through complaint submission step-by-step.') || 'This tour will guide you through complaint submission step-by-step.',
+        getEl: () => stepperRef.current
+      },
+      {
+        key: 'desc',
+        title: t('Describe the Issue') || 'Describe the Issue',
+        body: t('Write at least 1–2 lines so we can understand your issue clearly. You can also use Rewrite with AI.') || 'Write at least 1–2 lines so we can understand your issue clearly. You can also use Rewrite with AI.',
+        getEl: () => stepElsRef.current?.[1] || null
+      },
+      {
+        key: 'dept',
+        title: t('Department & Service') || 'Department & Service',
+        body: t('You can keep Auto-route, or select a Department and then a Service.') || 'You can keep Auto-route, or select a Department and then a Service.',
+        getEl: () => stepElsRef.current?.[2] || null
+      },
+      {
+        key: 'upload',
+        title: t('Add Evidence') || 'Add Evidence',
+        body: t('Upload photos/videos (optional) to support your complaint.') || 'Upload photos/videos (optional) to support your complaint.',
+        getEl: () => stepElsRef.current?.[3] || null
+      },
+      {
+        key: 'search',
+        title: t('Search Location') || 'Search Location',
+        body: t('Type an area/landmark and pick from the dropdown suggestions for faster results.') || 'Type an area/landmark and pick from the dropdown suggestions for faster results.',
+        getEl: () => searchInputRef.current
+      },
+      {
+        key: 'map',
+        title: t('Pin Location') || 'Pin Location',
+        body: t('Click on map or drag marker to set the exact location.') || 'Click on map or drag marker to set the exact location.',
+        getEl: () => mapWrapperRef.current || mapRef.current
+      },
+      {
+        key: 'submit',
+        title: t('Submit') || 'Submit',
+        body: t('When all required steps are complete, submit your complaint.') || 'When all required steps are complete, submit your complaint.',
+        getEl: () => submitButtonRef.current || stepElsRef.current?.[99] || null
+      }
+    ];
+  }, [t]);
+
+  const computeTourLayout = useCallback(() => {
+    if (!tourOpen) return;
+    const step = tourSteps[tourIndex];
+    const el = step?.getEl ? step.getEl() : null;
+    if (!el || typeof el.getBoundingClientRect !== 'function') {
+      setTourRect(null);
+      setTourTooltipPos({ top: 24, left: 24, placement: 'bottom' });
+      return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    const padding = 10;
+    const highlight = {
+      top: Math.max(0, rect.top - padding),
+      left: Math.max(0, rect.left - padding),
+      width: Math.min(window.innerWidth, rect.width + padding * 2),
+      height: Math.min(window.innerHeight, rect.height + padding * 2)
+    };
+    setTourRect(highlight);
+
+    const tooltipWidth = Math.min(380, Math.max(260, Math.floor(window.innerWidth * 0.9)));
+    const tooltipHeight = 170;
+    const gap = 14;
+
+    const preferBottom = rect.bottom + gap + tooltipHeight < window.innerHeight;
+    const placement = preferBottom ? 'bottom' : 'top';
+    const top = placement === 'bottom'
+      ? Math.min(window.innerHeight - tooltipHeight - 16, rect.bottom + gap)
+      : Math.max(16, rect.top - gap - tooltipHeight);
+
+    const centeredLeft = rect.left + rect.width / 2 - tooltipWidth / 2;
+    const left = Math.min(window.innerWidth - tooltipWidth - 16, Math.max(16, centeredLeft));
+
+    setTourTooltipPos({ top, left, placement });
+  }, [tourIndex, tourOpen, tourSteps]);
+
+  const openTour = useCallback(() => {
+    setTourOpen(true);
+    setTourIndex(0);
+    window.setTimeout(() => {
+      try {
+        const el = tourSteps[0]?.getEl?.();
+        el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      } catch {}
+      window.setTimeout(() => computeTourLayout(), 120);
+    }, 50);
+  }, [computeTourLayout, tourSteps]);
+
+  const closeTour = useCallback((markSeen) => {
+    setTourOpen(false);
+    setTourRect(null);
+    if (markSeen) {
+      try {
+        localStorage.setItem(CITIZEN_COMPLAINT_TOUR_SEEN_KEY, '1');
+      } catch {}
+    }
+  }, []);
+
+  const nextTour = useCallback(() => {
+    const next = Math.min(tourSteps.length - 1, tourIndex + 1);
+    setTourIndex(next);
+    window.setTimeout(() => {
+      try {
+        const el = tourSteps[next]?.getEl?.();
+        el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      } catch {}
+      window.setTimeout(() => computeTourLayout(), 120);
+    }, 30);
+  }, [computeTourLayout, tourIndex, tourSteps]);
+
+  const prevTour = useCallback(() => {
+    const prev = Math.max(0, tourIndex - 1);
+    setTourIndex(prev);
+    window.setTimeout(() => {
+      try {
+        const el = tourSteps[prev]?.getEl?.();
+        el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      } catch {}
+      window.setTimeout(() => computeTourLayout(), 120);
+    }, 30);
+  }, [computeTourLayout, tourIndex, tourSteps]);
+
+  useEffect(() => {
+    if (!tourOpen) return;
+    computeTourLayout();
+    const onResize = () => computeTourLayout();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onResize, true);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onResize, true);
+    };
+  }, [computeTourLayout, tourOpen]);
+
+  useEffect(() => {
+    if (activePage !== 'submit-complaint') return;
+    if (tourOpen) return;
+    try {
+      const seen = localStorage.getItem(CITIZEN_COMPLAINT_TOUR_SEEN_KEY);
+      if (seen) return;
+    } catch {}
+    window.setTimeout(() => openTour(), 350);
+  }, [activePage, openTour, tourOpen]);
 
   if (isLoading && !user) {
     return (
@@ -989,6 +1645,7 @@ const CitizenDashboard = () => {
         <div className="sidebar-header">
           <div className="header-top">
             <div className="app-branding">
+              <img className="app-logo" src={BRAND_LOGO_URL} alt={t('appTitle')} />
               <h2>{t('appTitle')}</h2>
               <p>{t('citizenDashboard')}</p>
             </div>
@@ -1001,7 +1658,7 @@ const CitizenDashboard = () => {
                   setSidebarCollapsed(!sidebarCollapsed);
                 }
               }}
-              aria-label={isMobile ? 'Close sidebar' : (sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar")}
+              aria-label={isMobile ? t('closeSidebar') || 'Close sidebar' : (sidebarCollapsed ? t('expandSidebar') || "Expand sidebar" : t('collapseSidebar') || "Collapse sidebar")}
             >
               <i className={`fas ${isMobile ? 'fa-times' : (sidebarCollapsed ? 'fa-bars' : 'fa-times')}`}></i>
             </button>
@@ -1038,6 +1695,18 @@ const CitizenDashboard = () => {
           ))}
         </div>
       </div>
+      {isMobile && sidebarMobileOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setSidebarMobileOpen(false)}
+          role="button"
+          tabIndex={0}
+          aria-label="Close sidebar"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') setSidebarMobileOpen(false);
+          }}
+        />
+      )}
 
       {/* Main Content */}
       <div className={`main-content ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -1048,7 +1717,7 @@ const CitizenDashboard = () => {
               <button
                 className="header-sidebar-toggle"
                 onClick={() => setSidebarMobileOpen(true)}
-                aria-label="Open sidebar"
+                aria-label={t('openSidebar') || "Open sidebar"}
               >
                 <i className="fas fa-bars"></i>
               </button>
@@ -1061,43 +1730,130 @@ const CitizenDashboard = () => {
               <p>{t('citizen')}</p>
             </div>
           </div>
-          <div className="header-actions" style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
-            <div className="language-toggle" onClick={toggleLanguage} style={{cursor: 'pointer', fontWeight: 'bold', padding: '5px 10px', background: 'var(--light-bg)', borderRadius: '5px'}}>
+          <div className="header-actions">
+            <button type="button" className="header-pill language-toggle" onClick={toggleLanguage}>
               {language === 'english' ? 'اردو' : 'English'}
-            </div>
-            <div className="notification-bell" onClick={() => setActivePage('notifications')}>
+            </button>
+            <button type="button" className="header-pill notification-bell" onClick={() => setActivePage('notifications')} aria-label={t('notifications')}>
               <i className="fas fa-bell"></i>
               {dashboardStats.unreadNotifications > 0 && (
                 <span className="notification-badge">{dashboardStats.unreadNotifications}</span>
               )}
-            </div>
+            </button>
           </div>
         </div>
 
         {/* Dashboard Page */}
         {activePage === 'dashboard' && (
           <div className="page-content active">
-            <h2 className="form-title">{t('Dashboard Overview')}</h2>
-            
-            <div className="dashboard-cards">
-              {[
-                { value: dashboardStats?.total || 0, title: t('totalComplaints'), icon: 'fa-clipboard-list', type: 'total' },
-                { value: dashboardStats?.pending || 0, title: t('pending'), icon: 'fa-clock', type: 'pending' },
-                { value: dashboardStats?.inProgress || 0, title: t('inProgress'), icon: 'fa-spinner', type: 'progress' },
-                { value: dashboardStats?.resolved || 0, title: t('resolved'), icon: 'fa-check-circle', type: 'resolved' }
-              ].map(card => (
-                <div key={card.type} className="card">
-                  <div className="card-header">
-                    <div>
-                      <div className="card-value">{card.value}</div>
-                      <div className="card-title">{card.title}</div>
-                    </div>
-                    <div className={`card-icon ${card.type}`}>
-                      <i className={`fas ${card.icon}`}></i>
-                    </div>
+            <div className="dashboard-hero">
+              <div className="dashboard-hero-content">
+                <div className="dashboard-hero-kicker">{t('citizenDashboard')}</div>
+                <div className="dashboard-hero-title">
+                  {user?.fullName ? `${user.fullName}` : t('user')}
+                </div>
+                <div className="dashboard-hero-subtitle">{t('dashboardOverview') || 'Dashboard Overview'}</div>
+                <div className="dashboard-hero-actions">
+                  <button type="button" className="hero-btn hero-primary" onClick={() => setActivePage('submit-complaint')}>
+                    <i className="fas fa-plus-circle"></i>
+                    <span>{t('submitComplaint')}</span>
+                  </button>
+                  <button type="button" className="hero-btn hero-secondary" onClick={() => setActivePage('my-complaints')}>
+                    <i className="fas fa-list"></i>
+                    <span>{t('myComplaints')}</span>
+                  </button>
+                </div>
+              </div>
+              <div className="dashboard-hero-metrics">
+                <div className="metric-chip">
+                  <div className="metric-chip-icon total"><i className="fas fa-clipboard-list"></i></div>
+                  <div className="metric-chip-meta">
+                    <div className="metric-chip-value">{dashboardStats?.total || 0}</div>
+                    <div className="metric-chip-label">{t('totalComplaints')}</div>
                   </div>
                 </div>
-              ))}
+                <div className="metric-chip">
+                  <div className="metric-chip-icon pending"><i className="fas fa-clock"></i></div>
+                  <div className="metric-chip-meta">
+                    <div className="metric-chip-value">{dashboardStats?.pending || 0}</div>
+                    <div className="metric-chip-label">{t('pending')}</div>
+                  </div>
+                </div>
+                <div className="metric-chip">
+                  <div className="metric-chip-icon progress"><i className="fas fa-spinner"></i></div>
+                  <div className="metric-chip-meta">
+                    <div className="metric-chip-value">{dashboardStats?.inProgress || 0}</div>
+                    <div className="metric-chip-label">{t('inProgress')}</div>
+                  </div>
+                </div>
+                <div className="metric-chip">
+                  <div className="metric-chip-icon resolved"><i className="fas fa-check-circle"></i></div>
+                  <div className="metric-chip-meta">
+                    <div className="metric-chip-value">{dashboardStats?.resolved || 0}</div>
+                    <div className="metric-chip-label">{t('resolved')}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="dashboard-insights">
+              <div className="insight-card">
+                <div className="insight-card-header">
+                  <div className="insight-card-title">{t('complaintsTrend') || 'Complaints Trend'}</div>
+                  <div className="insight-card-subtitle">{t('last6Months') || 'Last 6 months'}</div>
+                </div>
+                <div className="insight-card-body">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <AreaChart data={complaintsTrendData} margin={{ top: 10, right: 18, left: -8, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="citizenTrend" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#667eea" stopOpacity={0.55} />
+                          <stop offset="100%" stopColor="#667eea" stopOpacity={0.08} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(15, 23, 42, 0.08)" />
+                      <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#475569' }} axisLine={false} tickLine={false} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: '#475569' }} axisLine={false} tickLine={false} />
+                      <RechartsTooltip
+                        contentStyle={{
+                          borderRadius: 12,
+                          border: '1px solid rgba(15, 23, 42, 0.08)',
+                          boxShadow: '0 10px 30px rgba(15, 23, 42, 0.12)'
+                        }}
+                      />
+                      <Area type="monotone" dataKey="total" stroke="#667eea" strokeWidth={3} fill="url(#citizenTrend)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <div className="insight-card">
+                <div className="insight-card-header">
+                  <div className="insight-card-title">{t('recentActivity') || 'Recent Activity'}</div>
+                  <div className="insight-card-subtitle">{t('recentComplaints')}</div>
+                </div>
+                <div className="insight-card-body insight-mini-list">
+                  {complaints.slice(0, 4).map((c) => (
+                    <button
+                      key={c._id}
+                      type="button"
+                      className="mini-row"
+                      onClick={() => handleViewComplaint(c._id)}
+                    >
+                      <div className="mini-row-left">
+                        <div className="mini-row-title">{c.category}</div>
+                        <div className="mini-row-sub">{formatDate(c.createdAt)}</div>
+                      </div>
+                      <div className="mini-row-right">
+                        {getStatusBadge(c.status)}
+                        <i className="fas fa-chevron-right"></i>
+                      </div>
+                    </button>
+                  ))}
+                  {complaints.length === 0 && (
+                    <div className="mini-empty">{t('noComplaints')}</div>
+                  )}
+                </div>
+              </div>
             </div>
             
             <div className="complaints-list">
@@ -1157,12 +1913,65 @@ const CitizenDashboard = () => {
                 <i className="fas fa-hands-helping"></i>
               </div>
             </div>
+
+            <div className="complaint-stepper" ref={stepperRef}>
+              <div className="complaint-stepper-top">
+                <div className="complaint-stepper-title">
+                  {t('submitComplaint') || 'Submit Complaint'}
+                  {nextIncompleteStep ? (
+                    <span className="complaint-stepper-next">
+                      {(t('Next') || 'Next') + ': '}{nextIncompleteStep.label}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="complaint-stepper-actions">
+                  <button type="button" className="stepper-action-btn" onClick={handleGoToNextIncomplete}>
+                    <i className="fas fa-arrow-down"></i>
+                    <span>{t('Next missing') || 'Next missing'}</span>
+                  </button>
+                  <button type="button" className="stepper-action-btn" onClick={openTour}>
+                    <i className="fas fa-circle-question"></i>
+                    <span>{t('Guide') || 'Guide'}</span>
+                  </button>
+                  <button type="button" className="stepper-action-btn danger" onClick={handleClearDraft}>
+                    <i className="fas fa-trash"></i>
+                    <span>{t('Clear') || 'Clear'}</span>
+                  </button>
+                  <div className="complaint-stepper-badge">{submitComplaintProgress}%</div>
+                </div>
+              </div>
+              {draftBanner ? <div className="draft-banner">{draftBanner}</div> : null}
+              <div className="complaint-stepper-bar">
+                <div className="complaint-stepper-bar-fill" style={{ width: `${submitComplaintProgress}%` }} />
+              </div>
+              <div className="complaint-stepper-steps">
+                {submitComplaintSteps.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className={`stepper-item ${s.done ? 'done' : ''}`}
+                    onClick={() => scrollToStep(s.id)}
+                  >
+                    <div className="stepper-dot">
+                      <i className={`fas ${s.done ? 'fa-check' : s.icon}`}></i>
+                    </div>
+                    <div className="stepper-meta">
+                      <div className="stepper-label">
+                        {s.label}
+                        {s.optional ? <span className="stepper-optional">({t('optional') || 'Optional'})</span> : null}
+                      </div>
+                      <div className="stepper-sub">{s.meta}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
             
             <div className="complaint-form premium-form">
               <form onSubmit={handleComplaintSubmit}>
                 
                 {/* Step 1: Description */}
-                <div className="form-section animated-input">
+                <div className="form-section animated-input" ref={(el) => { stepElsRef.current[1] = el; }}>
                   <div className="section-header">
                     <div className="section-number">1</div>
                     <div className="section-info">
@@ -1186,28 +1995,16 @@ const CitizenDashboard = () => {
                       className="ai-rewrite-btn"
                       onClick={handleRewriteDescription}
                       disabled={isRewriting || !description.trim()}
-                      style={{
-                        position: 'absolute',
-                        bottom: '10px',
-                        right: '10px',
-                        background: 'linear-gradient(135deg, #6e8efb, #a777e3)',
-                        border: 'none',
-                        borderRadius: '20px',
-                        color: 'white',
-                        padding: '5px 15px',
-                        fontSize: '0.85rem',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                        boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
-                        zIndex: 2
-                      }}
                     >
                       {isRewriting ? (
                         <>
                           <i className="fas fa-spinner fa-spin"></i>
                           <span>{t('rewriting')}</span>
+                        </>
+                      ) : rewriteDone ? (
+                        <>
+                          <i className="fas fa-check"></i>
+                          <span>{t('Updated') || 'Updated'}</span>
                         </>
                       ) : (
                         <>
@@ -1220,7 +2017,7 @@ const CitizenDashboard = () => {
                 </div>
 
                 {/* Step 2: Department & Service Selection */}
-                <div className="form-section animated-input">
+                <div className="form-section animated-input" ref={(el) => { stepElsRef.current[2] = el; }}>
                   <div className="section-header">
                     <div className="section-number">2</div>
                     <div className="section-info">
@@ -1229,9 +2026,9 @@ const CitizenDashboard = () => {
                     </div>
                   </div>
                   
-                  <div className="form-group" style={{ marginBottom: '20px' }}>
-                    <label className="form-label" style={{ fontWeight: '600', display: 'block', marginBottom: '8px', color: '#4a5568' }}>{t('department') || 'Department'} ({t('optional') || 'Optional'})</label>
-                    <div style={{ marginBottom: 10, color: '#4a5568', fontSize: '0.95rem' }}>
+                  <div className="form-group">
+                    <label className="form-label">{t('department') || 'Department'} <span className="stepper-optional">({t('optional') || 'Optional'})</span></label>
+                    <div className="routing-recommendation">
                       {isRoutingAnalyzing ? (t('analyzing') || 'Analyzing complaint…') : (
                         routingRecommendation?.recommendedDepartment?.name
                           ? `${t('recommendation') || 'Recommendation'}: ${routingRecommendation.recommendedDepartment.name}`
@@ -1239,14 +2036,13 @@ const CitizenDashboard = () => {
                       )}
                     </div>
                     <select 
-                      className="form-control"
+                      className="premium-select"
                       value={selectedDepartmentId}
                       onChange={(e) => {
                         const v = e.target.value;
                         setSelectedDepartmentId(v);
                         setDepartmentManuallySelected(Boolean(v));
                       }}
-                      style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '1rem' }}
                     >
                       <option value="">{t('autoRoute') || 'Auto-route (Recommended)'}</option>
                       {departments.map(dep => (
@@ -1259,14 +2055,13 @@ const CitizenDashboard = () => {
                   </div>
 
                   {selectedDepartmentId && (
-                    <div className="form-group" style={{ marginBottom: '20px' }}>
-                      <label className="form-label" style={{ fontWeight: '600', display: 'block', marginBottom: '8px', color: '#4a5568' }}>{t('service') || 'Service'}</label>
+                    <div className="form-group">
+                      <label className="form-label">{t('service') || 'Service'}</label>
                       <select 
-                        className="form-control"
+                        className="premium-select"
                         value={selectedService}
                         onChange={(e) => setSelectedService(e.target.value)}
                         required
-                        style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '1rem' }}
                       >
                         <option value="">{t('selectService') || 'Select Service'}</option>
                         {availableServices.length > 0 ? (
@@ -1282,7 +2077,7 @@ const CitizenDashboard = () => {
                 </div>
                 
                 {/* Step 3: Upload Media */}
-                <div className="form-section animated-input">
+                <div className="form-section animated-input" ref={(el) => { stepElsRef.current[3] = el; }}>
                   <div className="section-header">
                     <div className="section-number">3</div>
                     <div className="section-info">
@@ -1305,7 +2100,7 @@ const CitizenDashboard = () => {
                       onChange={(e) => setSubmissionFiles(Array.from(e.target.files))}
                     />
                     {submissionFiles.length > 0 && (
-                      <div className="selected-files-count" style={{marginTop: '10px', color: '#4CAF50', fontWeight: 'bold'}}>
+                      <div className="selected-files-count">
                         <i className="fas fa-check"></i> {submissionFiles.length} files selected
                       </div>
                     )}
@@ -1313,7 +2108,7 @@ const CitizenDashboard = () => {
                 </div>
                 
                 {/* Step 4: Location */}
-                <div className="form-section animated-input">
+                <div className="form-section animated-input" ref={(el) => { stepElsRef.current[4] = el; }}>
                   <div className="section-header">
                     <div className="section-number">4</div>
                     <div className="section-info">
@@ -1322,43 +2117,40 @@ const CitizenDashboard = () => {
                     </div>
                   </div>
                   
-                  <div style={{ marginBottom: '20px', padding: '0 5px' }}>
-                    <div className="form-group" style={{ marginBottom: '20px' }}>
-                      <label className="form-label" style={{ fontWeight: '600', display: 'block', marginBottom: '10px', color: '#4a5568' }}>{t('areaType') || 'Area Type'}</label>
-                      <div className="area-type-options" style={{ display: 'flex', gap: '20px' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '10px 15px', background: areaType === 'Urban' ? '#ebf8ff' : '#f7fafc', border: `1px solid ${areaType === 'Urban' ? '#4299e1' : '#e2e8f0'}`, borderRadius: '8px', transition: 'all 0.2s' }}>
+                  <div className="location-top">
+                    <div className="form-group">
+                      <label className="form-label">{t('areaType') || 'Area Type'}</label>
+                      <div className="area-type-options">
+                        <label className={`area-type-card ${areaType === 'Urban' ? 'active' : ''}`}>
                           <input 
                             type="radio" 
                             name="areaType" 
                             value="Urban" 
                             checked={areaType === 'Urban'} 
                             onChange={(e) => setAreaType(e.target.value)} 
-                            style={{ marginRight: '8px' }}
                           />
-                          <span style={{ fontWeight: areaType === 'Urban' ? '600' : 'normal', color: areaType === 'Urban' ? '#2b6cb0' : '#4a5568' }}>Urban (Islamabad Sectors)</span>
+                          <span>{t('urbanSectors') || 'Urban (Islamabad Sectors)'}</span>
                         </label>
-                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '10px 15px', background: areaType === 'Rural' ? '#ebf8ff' : '#f7fafc', border: `1px solid ${areaType === 'Rural' ? '#4299e1' : '#e2e8f0'}`, borderRadius: '8px', transition: 'all 0.2s' }}>
+                        <label className={`area-type-card ${areaType === 'Rural' ? 'active' : ''}`}>
                           <input 
                             type="radio" 
                             name="areaType" 
                             value="Rural" 
                             checked={areaType === 'Rural'} 
                             onChange={(e) => setAreaType(e.target.value)} 
-                            style={{ marginRight: '8px' }}
                           />
-                          <span style={{ fontWeight: areaType === 'Rural' ? '600' : 'normal', color: areaType === 'Rural' ? '#2b6cb0' : '#4a5568' }}>Rural (Jurisdictions)</span>
+                          <span>{t('ruralJurisdictions') || 'Rural (Jurisdictions)'}</span>
                         </label>
                       </div>
                     </div>
 
                     {areaType === 'Urban' && (
-                      <div className="form-group" style={{ marginBottom: '20px' }}>
-                        <label className="form-label" style={{ fontWeight: '600', display: 'block', marginBottom: '8px', color: '#4a5568' }}>{t('sector') || 'Sector'}</label>
+                      <div className="form-group">
+                        <label className="form-label">{t('sector') || 'Sector'}</label>
                         <select 
-                          className="form-control" 
+                          className="premium-select"
                           value={sector}
                           onChange={(e) => setSector(e.target.value)}
-                          style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '1rem' }}
                         >
                           <option value="">{t('selectSector') || 'Select Sector'}</option>
                           {availableSectors.map(sec => (
@@ -1369,13 +2161,12 @@ const CitizenDashboard = () => {
                     )}
 
                     {areaType === 'Rural' && (
-                      <div className="form-group" style={{ marginBottom: '20px' }}>
-                        <label className="form-label" style={{ fontWeight: '600', display: 'block', marginBottom: '8px', color: '#4a5568' }}>{t('ruralJurisdiction') || 'Rural Jurisdiction'}</label>
+                      <div className="form-group">
+                        <label className="form-label">{t('ruralJurisdiction') || 'Rural Jurisdiction'}</label>
                         <select 
-                          className="form-control" 
+                          className="premium-select"
                           value={ruralJurisdiction}
                           onChange={(e) => setRuralJurisdiction(e.target.value)}
-                          style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '1rem' }}
                         >
                           <option value="">{t('selectJurisdiction') || 'Select Jurisdiction'}</option>
                           {availableJurisdictions.map(jur => (
@@ -1395,13 +2186,46 @@ const CitizenDashboard = () => {
                         placeholder={t('searchLocationPlaceholder')}
                         value={locationQuery}
                         onChange={(e) => setLocationQuery(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSearchLocation(e)}
+                        ref={searchInputRef}
+                        onFocus={() => setShowLocationSuggestions(true)}
+                        onBlur={() => {
+                          window.setTimeout(() => setShowLocationSuggestions(false), 180);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSearchLocation(e);
+                          if (e.key === 'Escape') setShowLocationSuggestions(false);
+                        }}
                       />
+                      {showLocationSuggestions && (isLocationSuggesting || locationSuggestions.length > 0) && (
+                        <div className="location-suggest-dropdown">
+                          {isLocationSuggesting && (
+                            <div className="location-suggest-item muted">
+                              <span>{t('Searching...') || 'Searching...'}</span>
+                            </div>
+                          )}
+                          {!isLocationSuggesting && locationSuggestions.length === 0 && (
+                            <div className="location-suggest-item muted">
+                              <span>{t('No results') || 'No results'}</span>
+                            </div>
+                          )}
+                          {locationSuggestions.map((s, idx) => (
+                            <button
+                              key={`${s?.lat}-${s?.lng}-${idx}`}
+                              type="button"
+                              className="location-suggest-item"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => handlePickSuggestion(s)}
+                            >
+                              <div className="location-suggest-title">{String(s?.address || '').split(',')[0] || 'Location'}</div>
+                              <div className="location-suggest-sub">{String(s?.address || '').trim()}</div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       <button 
                         type="button" 
                         className="location-btn search-btn"
                         onClick={handleSearchLocation}
-                        style={{ marginRight: '8px', backgroundColor: '#4a5568', color: 'white' }}
                       >
                         <i className="fas fa-search"></i>
                       </button>
@@ -1418,6 +2242,41 @@ const CitizenDashboard = () => {
 
                   <div className="map-wrapper">
                     <div className="map-container premium-map" ref={mapRef}></div>
+                    <div ref={mapWrapperRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+                    {mapState.status === 'loading' && (
+                      <div className="map-overlay">
+                        <div className="map-overlay-card">
+                          <div className="map-overlay-title">{t('Loading map...') || 'Loading map...'}</div>
+                          <div className="map-overlay-sub">{t('Please wait') || 'Please wait'}</div>
+                        </div>
+                      </div>
+                    )}
+                    {mapState.status === 'error' && (
+                      <div className="map-overlay">
+                        <div className="map-overlay-card">
+                          <div className="map-overlay-title">{t('Map not loading') || 'Map not loading'}</div>
+                          <div className="map-overlay-sub">{mapState.message || (t('Try again') || 'Try again')}</div>
+                          <button
+                            type="button"
+                            className="map-retry-btn"
+                            onClick={() => {
+                              mapInitAttemptRef.current += 1;
+                              setMapState({ status: 'loading', message: '' });
+                              window.setTimeout(() => {
+                                try {
+                                  if (!mapInstanceRef.current && mapRef.current && window.L) initializeMap();
+                                } catch {
+                                  setMapState({ status: 'error', message: 'Map failed to initialize' });
+                                }
+                              }, 120);
+                            }}
+                          >
+                            <i className="fas fa-rotate-right"></i>
+                            <span>{t('Retry') || 'Retry'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {addressPreview && (
                       <div className="address-preview premium-address">
                         <i className="fas fa-map-marker-alt"></i>
@@ -1431,8 +2290,8 @@ const CitizenDashboard = () => {
                   </div>
                 </div>
                 
-                <div className="form-group submit-group">
-                  <button type="submit" className="btn btn-primary premium-submit" disabled={isLoading}>
+                <div className="form-group submit-group" ref={(el) => { stepElsRef.current[99] = el; }}>
+                  <button ref={submitButtonRef} type="submit" className="btn btn-primary premium-submit" disabled={isLoading}>
                     {isLoading ? (
                       <>
                         <span className="btn-spinner"></span>
@@ -1453,6 +2312,50 @@ const CitizenDashboard = () => {
                 </div>
               </form>
             </div>
+
+            {tourOpen && (
+              <div className="tour-overlay" role="dialog" aria-modal="true">
+                <div className="tour-dim" />
+                {tourRect && (
+                  <div
+                    className="tour-highlight"
+                    style={{
+                      top: `${tourRect.top}px`,
+                      left: `${tourRect.left}px`,
+                      width: `${tourRect.width}px`,
+                      height: `${tourRect.height}px`
+                    }}
+                  />
+                )}
+                <div className="tour-tooltip" style={{ top: `${tourTooltipPos.top}px`, left: `${tourTooltipPos.left}px` }}>
+                  <div className="tour-step">
+                    {tourIndex + 1} / {tourSteps.length}
+                  </div>
+                  <div className="tour-title">{tourSteps[tourIndex]?.title}</div>
+                  <div className="tour-body">{tourSteps[tourIndex]?.body}</div>
+                  <div className="tour-actions">
+                    <button type="button" className="tour-btn ghost" onClick={() => closeTour(true)}>
+                      {t('Skip') || 'Skip'}
+                    </button>
+                    <div className="tour-actions-right">
+                      <button type="button" className="tour-btn ghost" onClick={prevTour} disabled={tourIndex === 0}>
+                        {t('Back') || 'Back'}
+                      </button>
+                      <button
+                        type="button"
+                        className="tour-btn primary"
+                        onClick={() => {
+                          if (tourIndex === tourSteps.length - 1) closeTour(true);
+                          else nextTour();
+                        }}
+                      >
+                        {tourIndex === tourSteps.length - 1 ? (t('Finish') || 'Finish') : (t('Next') || 'Next')}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1588,7 +2491,7 @@ const CitizenDashboard = () => {
                     <div className="notification-title">{notification.title}</div>
                     <div className="notification-message">{notification.message}</div>
                     <div className="notification-time">
-                      {new Date(notification.createdAt).toLocaleString()}
+                      {new Date(notification.createdAt || notification.timestamp).toLocaleString()}
                     </div>
                   </div>
                   {!notification.isRead && <div className="unread-indicator"></div>}
@@ -1759,7 +2662,7 @@ const CitizenDashboard = () => {
         >
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">Complaint Details</h3>
+              <h3 className="modal-title">{t('complaintDetails') || 'Complaint Details'}</h3>
               <button 
                 className="close-modal"
                 onClick={() => setShowComplaintModal(false)}
@@ -1770,22 +2673,22 @@ const CitizenDashboard = () => {
             <div className="modal-body">
               <div className="complaint-details">
                 <div className="detail-item">
-                  <div className="detail-label">Complaint ID</div>
+                  <div className="detail-label">{t('complaintId')}</div>
                   <div className="detail-value">{selectedComplaint.complaintId}</div>
                 </div>
                 <div className="detail-item">
-                  <div className="detail-label">Category</div>
+                  <div className="detail-label">{t('category')}</div>
                   <div className="detail-value">{selectedComplaint.category}</div>
                 </div>
                 <div className="detail-item">
-                  <div className="detail-label">Status</div>
+                  <div className="detail-label">{t('status')}</div>
                   <div className="detail-value">
                     {getStatusBadge(selectedComplaint.status)}
                   </div>
                 </div>
                 {selectedComplaint.assignedTo && (
                   <div className="detail-item">
-                    <div className="detail-label">Assigned Officer</div>
+                    <div className="detail-label">{t('assignedOfficer') || 'Assigned Officer'}</div>
                     <div className="detail-value">
                       {selectedComplaint.assignedTo.fullName}
                       {selectedComplaint.assignedTo.email ? ` (${selectedComplaint.assignedTo.email}` : ''}
@@ -1795,7 +2698,7 @@ const CitizenDashboard = () => {
                 )}
                 {selectedComplaint.status === 'in-progress' && Array.isArray(selectedComplaint.checkIns) && selectedComplaint.checkIns.length > 0 && (
                   <div className="detail-item">
-                    <div className="detail-label">Officer Live Location</div>
+                    <div className="detail-label">{t('officerLiveLocation') || 'Officer Live Location'}</div>
                     <div className="detail-value">
                       {selectedComplaint.checkIns[selectedComplaint.checkIns.length - 1].location?.address || 
                         `${selectedComplaint.checkIns[selectedComplaint.checkIns.length - 1].location?.lat}, ${selectedComplaint.checkIns[selectedComplaint.checkIns.length - 1].location?.lng}`}
@@ -1803,59 +2706,70 @@ const CitizenDashboard = () => {
                   </div>
                 )}
                 <div className="detail-item">
-                  <div className="detail-label">Date Submitted</div>
+                  <div className="detail-label">{t('dateSubmitted') || 'Date Submitted'}</div>
                   <div className="detail-value">
                     {new Date(selectedComplaint.createdAt).toLocaleString()}
                   </div>
                 </div>
                 <div className="detail-item">
-                  <div className="detail-label">Last Updated</div>
+                  <div className="detail-label">{t('lastUpdated') || 'Last Updated'}</div>
                   <div className="detail-value">
                     {new Date(selectedComplaint.updatedAt).toLocaleString()}
                   </div>
                 </div>
                 <div className="detail-item">
-                  <div className="detail-label">Description</div>
+                  <div className="detail-label">{t('description') || 'Description'}</div>
                   <div className="detail-value">{selectedComplaint.description}</div>
                 </div>
                 {selectedComplaint.remarks && (
                   <div className="detail-item">
-                    <div className="detail-label">Remarks</div>
+                    <div className="detail-label">{t('remarks') || 'Remarks'}</div>
                     <div className="detail-value">{selectedComplaint.remarks}</div>
                   </div>
                 )}
                 {selectedComplaint.resolutionDetails && (
                   <div className="detail-item">
-                    <div className="detail-label">Resolution Details</div>
+                    <div className="detail-label">{t('resolutionDetails') || 'Resolution Details'}</div>
                     <div className="detail-value">{selectedComplaint.resolutionDetails}</div>
                   </div>
                 )}
               {/* Feedback Form for resolved complaints */}
-              {selectedComplaint.status === 'resolved' && (
-                <div style={{ marginTop: '20px' }}>
-                  <h4 className="form-title" style={{ marginBottom: '10px' }}>Rate Resolution</h4>
+              {selectedComplaint.status === 'resolved' && !(selectedComplaint.feedback && (selectedComplaint.feedback.rating != null || selectedComplaint.feedback.createdAt)) && (
+                <div className="feedback-section-premium">
+                  <h4 className="form-title">{t('rateResolution') || 'Rate Resolution'}</h4>
+                  
                   <div className="form-group">
-                    <label className="form-label">Rating (1-5)</label>
-                    <select 
-                      className="form-control" 
-                      value={feedback.rating}
-                      onChange={(e) => setFeedback({ ...feedback, rating: Number(e.target.value) })}
-                    >
-                      {[1,2,3,4,5].map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
+                    <label className="form-label">{t('howWasExperience') || 'How was your experience?'}</label>
+                    <div className="star-rating-wrapper">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <i
+                          key={star}
+                          className={`${(hoverRating || feedback.rating) >= star ? 'fas' : 'far'} fa-star star-icon`}
+                          onMouseEnter={() => setHoverRating(star)}
+                          onMouseLeave={() => setHoverRating(0)}
+                          onClick={() => setFeedback({ ...feedback, rating: star })}
+                        ></i>
+                      ))}
+                    </div>
                   </div>
+
                   <div className="form-group">
-                    <label className="form-label">Comment</label>
-                    <textarea 
-                      className="form-control"
-                      rows="3"
-                      value={feedback.comment}
-                      onChange={(e) => setFeedback({ ...feedback, comment: e.target.value })}
-                      placeholder="Share your experience..."
-                    />
+                    <label className="form-label">{t('comment') || 'Your Feedback'}</label>
+                    <div className="premium-input-wrapper">
+                      <textarea 
+                        className="form-control premium-textarea"
+                        rows="4"
+                        value={feedback.comment}
+                        onChange={(e) => setFeedback({ ...feedback, comment: e.target.value })}
+                        placeholder={t('shareExperiencePlaceholder') || "Share your experience with us..."}
+                      ></textarea>
+                      <div className="input-decoration"></div>
+                    </div>
                   </div>
+
                   <button 
-                    className="btn btn-primary"
+                    className="btn btn-primary premium-submit"
+                    type="button"
                     onClick={async () => {
                       try {
                         const token = localStorage.getItem('token');
@@ -1869,17 +2783,39 @@ const CitizenDashboard = () => {
                         });
                         const data = await res.json();
                         if (data.success) {
-                          showNotificationMessage('Thanks for your feedback!');
+                          setNotificationType('success');
+                          setNotificationMessage(t('thanksFeedback') || 'Thanks for your feedback!');
+                          setShowNotification(true);
+                          setSelectedComplaint(prev => ({
+                            ...(prev || {}),
+                            feedback: data.feedback || data?.complaint?.feedback || {
+                              rating: feedback.rating,
+                              comment: feedback.comment,
+                              createdAt: new Date().toISOString()
+                            }
+                          }));
+                          if (selectedComplaint?._id) {
+                            refreshComplaintDetails(selectedComplaint._id);
+                          }
+                          setFeedback({ rating: 5, comment: '' });
                         } else {
-                          showNotificationMessage(data.message || 'Failed to submit feedback', 'error');
+                          showNotificationMessage(data.message || t('failedFeedback') || 'Failed to submit feedback', 'error');
                         }
                       } catch (err) {
-                        showNotificationMessage('Failed to submit feedback', 'error');
+                        showNotificationMessage(t('failedFeedback') || 'Failed to submit feedback', 'error');
                       }
                     }}
                   >
-                    <i className="fas fa-star"></i> Submit Feedback
+                    <i className="fas fa-paper-plane"></i> {t('submitFeedbackBtn') || 'Submit Feedback'}
                   </button>
+                </div>
+              )}
+              {selectedComplaint.status === 'resolved' && (selectedComplaint.feedback && (selectedComplaint.feedback.rating != null || selectedComplaint.feedback.createdAt)) && (
+                <div className="feedback-section-premium">
+                  <h4 className="form-title">{t('rateResolution') || 'Rate Resolution'}</h4>
+                  <div style={{ color: '#64748b', fontWeight: 700 }}>
+                    {t('feedbackAlreadySubmitted') || 'Feedback already submitted.'}
+                  </div>
                 </div>
               )}
               </div>
@@ -1890,7 +2826,7 @@ const CitizenDashboard = () => {
                 (selectedComplaint.evidence && selectedComplaint.evidence.length > 0)
               ) && (
                 <>
-                  <h4 style={{ marginTop: '25px' }}>Media Attachments</h4>
+                  <h4 style={{ marginTop: '25px' }}>{t('mediaAttachments') || 'Media Attachments'}</h4>
                   <div className="media-gallery" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                     {/* Initial Complaint Media */}
                     {selectedComplaint.media && selectedComplaint.media.map((media, index) => (
@@ -1898,7 +2834,7 @@ const CitizenDashboard = () => {
                         <a href={getImageUrl(media.url)} target="_blank" rel="noopener noreferrer">
                           <img 
                             src={getImageUrl(media.url)} 
-                            alt={`Complaint Media ${index + 1}`} 
+                            alt={`${t('complaintMedia') || 'Complaint Media'} ${index + 1}`} 
                             style={{width: '100px', height: '100px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #dee2e6'}} 
                           />
                         </a>
@@ -1912,7 +2848,7 @@ const CitizenDashboard = () => {
                           <a href={getImageUrl(file.url)} target="_blank" rel="noopener noreferrer">
                             <img 
                               src={getImageUrl(file.url)} 
-                              alt={`Evidence ${i+1}-${j+1}`} 
+                              alt={`${t('evidence') || 'Evidence'} ${i+1}-${j+1}`} 
                               style={{width: '100px', height: '100px', objectFit: 'cover', borderRadius: '8px', border: '1px solid #dee2e6'}} 
                             />
                           </a>
@@ -1925,7 +2861,7 @@ const CitizenDashboard = () => {
 
               {selectedComplaint.evidence && selectedComplaint.evidence.length > 0 && (
                 <>
-                  <h4 style={{ marginTop: '25px' }}>Updates Log</h4>
+                  <h4 style={{ marginTop: '25px' }}>{t('updatesLog') || 'Updates Log'}</h4>
                   <div className="evidence-list">
                     {selectedComplaint.evidence.map((ev, i) => (
                       <div key={i} className="evidence-item" style={{ marginBottom: '15px', padding: '10px', background: '#f8f9fa', borderRadius: '8px' }}>
@@ -1935,7 +2871,7 @@ const CitizenDashboard = () => {
                         </div>
                         {ev.files && ev.files.length > 0 && (
                           <div style={{ fontSize: '0.85rem', color: '#666' }}>
-                            <i className="fas fa-paperclip"></i> {ev.files.length} file(s) attached
+                            <i className="fas fa-paperclip"></i> {ev.files.length} {t('fileAttached') || 'file(s) attached'}
                           </div>
                         )}
                       </div>
@@ -1944,66 +2880,12 @@ const CitizenDashboard = () => {
                 </>
               )}
 
-              {/* Add Evidence Section */}
-              <div style={{ marginTop: '20px', borderTop: '1px solid #dee2e6', paddingTop: '20px' }}>
-                {!showEvidenceForm ? (
-                  <button 
-                    className="btn btn-secondary"
-                    onClick={() => setShowEvidenceForm(true)}
-                    style={{ width: '100%', marginBottom: '10px' }}
-                  >
-                    <i className="fas fa-plus-circle"></i> Add More Evidence
-                  </button>
-                ) : (
-                  <div className="add-evidence-form" style={{ background: '#f8f9fa', padding: '15px', borderRadius: '8px' }}>
-                    <h4 style={{ marginBottom: '15px' }}>Add New Evidence</h4>
-                    <form onSubmit={handleEvidenceSubmit}>
-                      <div className="form-group">
-                        <label className="form-label">Files (Images/Videos)</label>
-                        <input
-                          type="file"
-                          className="form-control"
-                          multiple
-                          accept="image/*,video/*"
-                          onChange={(e) => setEvidenceFiles(Array.from(e.target.files))}
-                          required
-                        />
-                      </div>
-                      <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
-                        <button 
-                          type="submit" 
-                          className="btn btn-primary"
-                          disabled={isUploadingEvidence}
-                        >
-                          {isUploadingEvidence ? (
-                            <><i className="fas fa-spinner fa-spin"></i> Uploading...</>
-                          ) : (
-                            <><i className="fas fa-upload"></i> Upload Evidence</>
-                          )}
-                        </button>
-                        <button 
-                          type="button" 
-                          className="btn btn-outline"
-                          onClick={() => {
-                            setShowEvidenceForm(false);
-                            setEvidenceFiles([]);
-                          }}
-                          disabled={isUploadingEvidence}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                )}
-              </div>
-
               <div style={{ marginTop: '20px' }}>
                 <button
                   className="btn btn-info"
                   onClick={() => { setShowComplaintModal(false); setShowChatPanel(true); }}
                 >
-                  <i className="fas fa-comments"></i> Chat with Field Officer
+                  <i className="fas fa-comments"></i> {t('chatWithOfficer') || 'Chat with Field Officer'}
                 </button>
               </div>
             </div>
@@ -2011,42 +2893,31 @@ const CitizenDashboard = () => {
         </div>
   )}
 
-      {/* Notification Toast or Popup */}
+      {/* Notification Popup (Center Modal) */}
       {showNotification && (
-        notificationType === 'error' ? (
-          <div className="notification-popup-overlay">
-            <div className="notification-popup active">
-              <div className="notification-icon error">
-                <i className="fas fa-exclamation-circle"></i>
-              </div>
-              <div className="notification-content">
-                <h3 className="notification-title">Error</h3>
-                <div className="notification-message">{notificationMessage}</div>
-              </div>
-              <button 
-                className="notification-close-btn"
-                onClick={() => setShowNotification(false)}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className={`notification-toast active ${notificationType}`}>
-            <div className="notification-icon">
-              <i className={`fas ${notificationType === 'success' ? 'fa-check-circle' : 'fa-info-circle'}`}></i>
+        <div className="notification-popup-overlay">
+          <div className={`notification-popup active ${notificationType}`}>
+            <div className={`notification-icon ${notificationType}`}>
+              <i className={`fas ${
+                notificationType === 'success' ? 'fa-check-circle' : 
+                notificationType === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle'
+              }`}></i>
             </div>
             <div className="notification-content">
+              <h3 className="notification-title">
+                {notificationType === 'success' ? (t('success') || 'Success') : 
+                 notificationType === 'error' ? (t('error') || 'Error') : (t('info') || 'Info')}
+              </h3>
               <div className="notification-message">{notificationMessage}</div>
             </div>
             <button 
-              className="notification-close"
+              className={`notification-close-btn ${notificationType}`}
               onClick={() => setShowNotification(false)}
             >
-              &times;
+              {t('close') || 'Close'}
             </button>
           </div>
-        )
+        </div>
       )}
 
       {/* Success Modal */}
@@ -2064,8 +2935,8 @@ const CitizenDashboard = () => {
               </div>
             </div>
             
-            <h2 className="success-title">Complaint Submitted Successfully!</h2>
-            <p className="success-subtitle">Your complaint has been registered and will be reviewed shortly</p>
+            <h2 className="success-title">{t('complaintSuccessTitle') || 'Complaint Submitted Successfully!'}</h2>
+            <p className="success-subtitle">{t('complaintSuccessSubtitle') || 'Your complaint has been registered and will be reviewed shortly'}</p>
             
             <div className="success-details">
               <div className="detail-card">
@@ -2073,7 +2944,7 @@ const CitizenDashboard = () => {
                   <i className="fas fa-ticket-alt"></i>
                 </div>
                 <div className="detail-content">
-                  <span className="detail-label">Complaint ID</span>
+                  <span className="detail-label">{t('complaintId')}</span>
                   <span className="detail-value">{submittedComplaint.complaintId}</span>
                 </div>
               </div>
@@ -2083,7 +2954,7 @@ const CitizenDashboard = () => {
                   <i className="fas fa-th-large"></i>
                 </div>
                 <div className="detail-content">
-                  <span className="detail-label">Category</span>
+                  <span className="detail-label">{t('category')}</span>
                   <span className="detail-value">{submittedComplaint.category}</span>
                 </div>
               </div>
@@ -2093,8 +2964,8 @@ const CitizenDashboard = () => {
                   <i className="fas fa-clock"></i>
                 </div>
                 <div className="detail-content">
-                  <span className="detail-label">Status</span>
-                  <span className="detail-value status-pending">Pending Review</span>
+                  <span className="detail-label">{t('status')}</span>
+                  <span className="detail-value status-pending">{t('pendingReview') || 'Pending Review'}</span>
                 </div>
               </div>
               
@@ -2103,15 +2974,15 @@ const CitizenDashboard = () => {
                   <i className="fas fa-calendar-check"></i>
                 </div>
                 <div className="detail-content">
-                  <span className="detail-label">Expected Resolution</span>
-                  <span className="detail-value">3-5 Business Days</span>
+                  <span className="detail-label">{t('expectedResolution') || 'Expected Resolution'}</span>
+                  <span className="detail-value">{t('businessDays')}</span>
                 </div>
               </div>
             </div>
             
-            <div className="success-info">
+            <div className="success-footer">
               <i className="fas fa-info-circle"></i>
-              <p>You will receive notifications about the progress of your complaint. You can track the status anytime from your dashboard.</p>
+              <p>{t('successFooterText') || 'You will receive notifications about the progress of your complaint. You can track the status anytime from your dashboard.'}</p>
             </div>
             
             <div className="success-actions">
@@ -2123,7 +2994,7 @@ const CitizenDashboard = () => {
                 }}
               >
                 <i className="fas fa-home"></i>
-                Go to Dashboard
+                {t('goToDashboard') || 'Go to Dashboard'}
               </button>
               <button 
                 className="btn btn-primary"
@@ -2133,7 +3004,7 @@ const CitizenDashboard = () => {
                 }}
               >
                 <i className="fas fa-list"></i>
-                View My Complaints
+                {t('viewMyComplaints') || 'View My Complaints'}
               </button>
             </div>
             
@@ -2147,7 +3018,7 @@ const CitizenDashboard = () => {
         </div>
       )}
 
-      {/* AI Chatbot */}
+            {/* AI Chatbot */}
       <div className="chatbot-container">
         <div 
           className="chatbot-button"
@@ -2160,7 +3031,7 @@ const CitizenDashboard = () => {
           <div className="chatbot-header">
             <div className="chatbot-title">
               <i className="fas fa-robot"></i>
-              <span>Awaz e Shehr Assistant</span>
+              <span>{t('botTitle') || 'Awaz e Shehr Assistant'}</span>
             </div>
             <button 
               className="chatbot-close"
@@ -2194,7 +3065,7 @@ const CitizenDashboard = () => {
           <div className="chatbot-input">
             <input
               type="text"
-              placeholder="Type your message here..."
+              placeholder={t('chatbotPlaceholder') || "Type your message here..."}
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
@@ -2204,6 +3075,7 @@ const CitizenDashboard = () => {
             </button>
           </div>
         </div>
+      </div>
       {showChatPanel && selectedComplaint && (
         <ComplaintChatPanel
           complaint={selectedComplaint}
@@ -2212,8 +3084,6 @@ const CitizenDashboard = () => {
         />
       )}
     </div>
-  </div>
   );
 };
-
 export default CitizenDashboard;

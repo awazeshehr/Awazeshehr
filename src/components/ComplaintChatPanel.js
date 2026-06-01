@@ -31,6 +31,10 @@ export default function ComplaintChatPanel({ complaint, role, onClose }) {
   const startWRef = useRef(420);
 
   const templates = role === 'field-officer' ? FIELD_OFFICER_TEMPLATES : CITIZEN_TEMPLATES;
+  const normalizedStatus = String(complaint?.status || '').toLowerCase();
+  const chatClosedByStatus = normalizedStatus === 'completed';
+  const chatClosed = chatClosedByStatus;
+  const chatClosedText = chatClosedByStatus ? 'Your chat has been closed.' : 'Your chat has been closed.';
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -78,6 +82,7 @@ export default function ComplaintChatPanel({ complaint, role, onClose }) {
   }, [messages]);
 
   const send = () => {
+    if (chatClosed) return;
     if ((!templateKey && !notes) || !socketRef.current) return;
     const payload = {
       complaintId: complaint._id || complaint.id,
@@ -132,6 +137,12 @@ export default function ComplaintChatPanel({ complaint, role, onClose }) {
         </div>
 
         <div className="chat-messages" aria-live="polite">
+          {chatClosed && (
+            <div className="chat-closed-banner" role="status">
+              <i className="fas fa-lock"></i>
+              <span>{chatClosedText}</span>
+            </div>
+          )}
           {loading && <div style={{ color: '#6b7280', fontSize: '0.9rem' }}>Loading...</div>}
           {!loading && messages.map((m, idx) => {
             const mine = m.senderRole === role;
@@ -165,20 +176,21 @@ export default function ComplaintChatPanel({ complaint, role, onClose }) {
 
         <div className="chat-composer">
           <div className="composer-grid">
-            <div className="quick-bubbles" role="list">
-              {templates.map((t) => (
-                <button
-                  key={t.key}
-                  role="listitem"
-                  type="button"
-                  className={`quick-bubble ${templateKey === t.key ? 'selected' : ''}`}
-                  onClick={() => setTemplateKey(t.key)}
-                  aria-pressed={templateKey === t.key}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+            {!chatClosed && (
+              <div className="quick-bubbles">
+                {templates.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    className={`quick-bubble ${templateKey === t.key ? 'selected' : ''}`}
+                    onClick={() => setTemplateKey(t.key)}
+                    aria-pressed={templateKey === t.key}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="composer-row">
               <textarea
                 className="composer-notes"
@@ -187,8 +199,9 @@ export default function ComplaintChatPanel({ complaint, role, onClose }) {
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 onKeyDown={onKeyDown}
+                disabled={chatClosed}
               />
-              <button className="composer-send" onClick={send} aria-label="Send message" disabled={!templateKey && !notes}>
+              <button className="composer-send" onClick={send} aria-label="Send message" disabled={chatClosed || (!templateKey && !notes)}>
                 <i className="fas fa-paper-plane"></i>
               </button>
             </div>
