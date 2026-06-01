@@ -8,23 +8,29 @@ const RoleSelection = () => {
   const navigate = useNavigate();
   const { t, language, toggleLanguage } = useLanguage();
   const particlesContainerRef = useRef(null);
+  const logoUrl = `${process.env.PUBLIC_URL}/awazeshehr.jpeg`;
   
-  const [selectedRole, setSelectedRole] = useState("citizen");
+  const [selectedRole] = useState("citizen");
   const [activeTab, setActiveTab] = useState("login");
   const [showOtp, setShowOtp] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
   const [resetStage, setResetStage] = useState('email');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isActionLoading, setIsActionLoading] = useState(false);
   const [authAnimation, setAuthAnimation] = useState("");
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
-  const [showRegisterConfirm, setShowRegisterConfirm] = useState(false);
-  const [urbanSectors, setUrbanSectors] = useState([]);
-  const [ruralJurisdictions, setRuralJurisdictions] = useState([]);
-  const [regErrors, setRegErrors] = useState({});
-  const [regTouched, setRegTouched] = useState({});
-  const [passwordScore, setPasswordScore] = useState(0);
-  const [emailAvailability, setEmailAvailability] = useState(null);
+  const [sectors, setSectors] = useState([]);
+  const [jurisdictions, setJurisdictions] = useState([]);
+  const [passwordRequirements, setPasswordRequirements] = useState({
+    length: false,
+    uppercase: false,
+    lowercase: false,
+    number: false,
+    special: false
+  });
+
   const [formData, setFormData] = useState({
     login: { identifier: '', password: '' },
     register: { 
@@ -44,40 +50,34 @@ const RoleSelection = () => {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setIsLoading(false);
+      setIsInitialLoading(false);
     }, 2500);
 
     return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
-    if (!isLoading) {
+    if (!isInitialLoading) {
       setAuthAnimation('slide-in');
     }
-  }, [isLoading]);
+  }, [isInitialLoading]);
 
+  // Fetch registration data
   useEffect(() => {
-    const fetchAreas = async () => {
-      let attempts = 0;
-      while (attempts < 3) {
-        try {
-          const sData = await dataService.apiCall('/auth/urban-sectors');
-          if (sData?.success) setUrbanSectors(sData.sectors || []);
-          const rData = await dataService.apiCall('/auth/rural-jurisdictions');
-          if (rData?.success) setRuralJurisdictions(rData.jurisdictions || []);
-          return;
-        } catch (e) {
-          attempts += 1;
-          if (attempts >= 3) {
-            alert(t ? t('serviceUnavailable') || 'Service temporarily unavailable. Please try again.' : 'Service temporarily unavailable. Please try again.');
-          } else {
-            await new Promise(res => setTimeout(res, 1200));
-          }
-        }
+    const fetchRegData = async () => {
+      try {
+        const [sData, jData] = await Promise.all([
+          dataService.getSectors(),
+          dataService.getJurisdictions()
+        ]);
+        setSectors(sData || []);
+        setJurisdictions(jData || []);
+      } catch (error) {
+        console.error("Error fetching registration data:", error);
       }
     };
-    fetchAreas();
-  }, [t]);
+    fetchRegData();
+  }, []);
 
   // Particle System
   useEffect(() => {
@@ -174,47 +174,13 @@ const RoleSelection = () => {
   }, []);
 
   const handleTabChange = (tab) => {
-    setActiveTab(tab);
-    setShowOtp(false);
-    setShowForgot(false);
-  };
-
-  const validateEmailLocal = (v) => {
-    if (!v) return { valid: false, message: 'Email is required' };
-    const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
-    return ok ? { valid: true } : { valid: false, message: 'Invalid email format' };
-  };
-  const validatePasswordLocal = (v) => {
-    if (!v) return { valid: false, message: 'Password is required' };
-    const ok = /^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[^a-zA-Z0-9]).{6,}$/.test(v);
-    return ok ? { valid: true } : { valid: false, message: 'fulfill requirements of password' };
-  };
-  const validateNameLocal = (v) => {
-    if (!v || v.length < 2) return { valid: false, message: 'Full name must be at least 2 characters long' };
-    if (!/^[a-zA-Z\s]+$/.test(v)) return { valid: false, message: 'Name can only contain letters and spaces' };
-    return { valid: true };
-  };
-  const validatePhoneLocal = (v) => {
-    if (!v) return { valid: false, message: 'Phone number is required' };
-    const clean = v.replace(/[\s\-\(\)]/g, '');
-    const ok = /^(\+92|92|0)?3[0-9]{9}$/.test(clean);
-    return ok ? { valid: true } : { valid: false, message: 'Please enter a valid Pakistani mobile number (e.g., 03XXXXXXXXX)' };
-  };
-  const validateCnicLocal = (v) => {
-    if (!v) return { valid: false, message: 'CNIC is required' };
-    const clean = v.replace(/[\s\-]/g, '');
-    if (!/^[0-9]{13}$/.test(clean)) return { valid: false, message: 'CNIC must be exactly 13 digits without dashes' };
-    if (clean[0] === '0') return { valid: false, message: 'CNIC cannot start with 0' };
-    return { valid: true };
-  };
-  const computePasswordScore = (v) => {
-    let s = 0;
-    if (v && v.length >= 6) s++;
-    if (/[A-Z]/.test(v || '')) s++;
-    if (/[a-z]/.test(v || '')) s++;
-    if (/\d/.test(v || '')) s++;
-    if (/[^a-zA-Z0-9]/.test(v || '')) s++;
-    return Math.min(s, 4);
+    setIsTransitioning(true);
+    setTimeout(() => {
+      setActiveTab(tab);
+      setShowOtp(false);
+      setShowForgot(false);
+      setIsTransitioning(false);
+    }, 300);
   };
 
   const handleInputChange = (formType, field, value) => {
@@ -222,17 +188,12 @@ const RoleSelection = () => {
     
     // Format input based on field type
     if (field === 'phone') {
-      // Remove non-digits except + at the beginning
       processedValue = value.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '');
-      // Limit to reasonable length
       if (processedValue.length > 13) processedValue = processedValue.slice(0, 13);
     } else if (field === 'cnic') {
-      // Only allow digits
       processedValue = value.replace(/\D/g, '');
-      // Limit to 13 digits
       if (processedValue.length > 13) processedValue = processedValue.slice(0, 13);
     } else if (field === 'fullName') {
-      // Allow letters and spaces only
       processedValue = value.replace(/[^a-zA-Z\s]/g, '');
     }
     
@@ -244,34 +205,16 @@ const RoleSelection = () => {
       }
     }));
 
-    if (formType === 'register') {
-      setRegTouched(prev => ({ ...prev, [field]: true }));
-      let res = null;
-      if (field === 'email') res = validateEmailLocal(processedValue);
-      if (field === 'password') res = validatePasswordLocal(processedValue);
-      if (field === 'fullName') res = validateNameLocal(processedValue);
-      if (field === 'phone') res = validatePhoneLocal(processedValue);
-      if (field === 'cnic') res = validateCnicLocal(processedValue);
-      if (field === 'confirmPassword') {
-        res = processedValue && processedValue === (formData.register.password || '') ? { valid: true } : { valid: false, message: 'Passwords do not match' };
-      }
-      if (field === 'password') setPasswordScore(computePasswordScore(processedValue));
-      if (res) setRegErrors(prev => ({ ...prev, [field]: res.valid ? null : res.message }));
-      if (field === 'email') {
-        const email = processedValue;
-        if (validateEmailLocal(email).valid) {
-          setTimeout(async () => {
-            try {
-              const j = await dataService.apiCall(`/auth/check-availability?email=${encodeURIComponent(email)}`);
-              const available = j?.data?.emailAvailable;
-              setEmailAvailability(available === true ? 'available' : 'taken');
-            } catch {
-              setEmailAvailability(null);
-            }
-          }, 450);
-        } else {
-          setEmailAvailability(null);
-        }
+    if (formType === 'register' || (formType === 'reset' && field === 'newPassword')) {
+      if (field === 'password' || field === 'newPassword') {
+        const pass = processedValue;
+        setPasswordRequirements({
+          length: pass.length >= 6,
+          uppercase: /[A-Z]/.test(pass),
+          lowercase: /[a-z]/.test(pass),
+          number: /\d/.test(pass),
+          special: /[^a-zA-Z0-9]/.test(pass)
+        });
       }
     }
   };
@@ -332,7 +275,7 @@ const RoleSelection = () => {
       return;
     }
     try {
-      setIsLoading(true);
+      setIsActionLoading(true);
       const resp = await fetch(`${dataService.apiBaseUrl}/auth/forgot-password`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email })
       });
@@ -345,7 +288,7 @@ const RoleSelection = () => {
     } catch (e) {
       alert('Failed to send OTP');
     } finally {
-      setIsLoading(false);
+      setIsActionLoading(false);
     }
   };
 
@@ -356,7 +299,7 @@ const RoleSelection = () => {
       return;
     }
     try {
-      setIsLoading(true);
+      setIsActionLoading(true);
       const resp = await fetch(`${dataService.apiBaseUrl}/auth/verify-reset-otp`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: formData.reset.email, otp: formData.reset.otp.join('') })
       });
@@ -369,7 +312,7 @@ const RoleSelection = () => {
     } catch (e) {
       alert('OTP verification failed');
     } finally {
-      setIsLoading(false);
+      setIsActionLoading(false);
     }
   };
 
@@ -380,16 +323,12 @@ const RoleSelection = () => {
       alert('Password must be at least 6 characters and include letters and numbers');
       return;
     }
-    if (!/[a-zA-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
-      alert('Password must contain at least one letter and one number');
-      return;
-    }
     if (newPassword !== confirmPassword) {
       alert('Passwords do not match');
       return;
     }
     try {
-      setIsLoading(true);
+      setIsActionLoading(true);
       const resp = await fetch(`${dataService.apiBaseUrl}/auth/reset-password`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: formData.reset.email, otp: formData.reset.otp.join(''), newPassword, confirmPassword })
       });
@@ -409,40 +348,30 @@ const RoleSelection = () => {
     } catch (e) {
       alert('Failed to reset password');
     } finally {
-      setIsLoading(false);
+      setIsActionLoading(false);
     }
   };
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    
-    // Basic validation
     if (!formData.login.identifier || !formData.login.password) {
       alert(t('fillAllFields'));
       return;
     }
-    
-    setIsLoading(true);
-
+    setIsActionLoading(true);
     try {
       const response = await fetch(`${dataService.apiBaseUrl}/auth/login`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           identifier: formData.login.identifier,
           password: formData.login.password
         }),
       });
-
       const data = await response.json();
-
       if (data.success) {
-        // Store token and user data
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
-        
         const role = data.user?.role;
         const map = {
           'citizen': '/citizen-dashboard',
@@ -455,10 +384,9 @@ const RoleSelection = () => {
         alert(data.message);
       }
     } catch (error) {
-      console.error('Login error:', error);
       alert(t('loginFailed'));
     } finally {
-      setIsLoading(false);
+      setIsActionLoading(false);
     }
   };
 
@@ -528,96 +456,61 @@ const RoleSelection = () => {
 
   const handleRegister = async (e) => {
     e.preventDefault();
-    
-    // Validate form
     const errors = validateForm('register');
     if (errors.length > 0) {
       alert(errors.join('\n'));
       return;
     }
-
-    setIsLoading(true);
-
+    setIsActionLoading(true);
     try {
       const response = await fetch(`${dataService.apiBaseUrl}/auth/register`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...formData.register,
-          role: 'citizen'
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...formData.register, role: 'citizen' }),
       });
-
       const data = await response.json();
-
       if (data.success) {
         setFormData(prev => ({
           ...prev,
-          otp: { 
-            ...prev.otp, 
-            email: formData.register.email,
-            otp: ['', '', '', '', '', '']
-          }
+          otp: { ...prev.otp, email: formData.register.email, otp: ['', '', '', '', '', ''] }
         }));
         setShowOtp(true);
       } else {
         alert(data.message);
       }
     } catch (error) {
-      console.error('Registration error:', error);
       alert('Registration failed. Please try again.');
     } finally {
-      setIsLoading(false);
+      setIsActionLoading(false);
     }
   };
 
-
-
   const handleOtpVerify = async (e) => {
     e.preventDefault();
-    
-    // Check if all OTP fields are filled
     if (formData.otp.otp.some(digit => digit === '')) {
       alert('Please enter the complete OTP code');
       return;
     }
-
-    setIsLoading(true);
-
+    setIsActionLoading(true);
     try {
       const response = await fetch(`${dataService.apiBaseUrl}/auth/verify-otp`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: formData.otp.email,
           otp: formData.otp.otp.join('')
         }),
       });
-
       const data = await response.json();
-
       if (data.success) {
         setShowOtp(false);
         setActiveTab("login");
         alert("Registration successful! Please login with your credentials.");
-        
-        // Clear register form
         setFormData(prev => ({
           ...prev,
           register: {
-            fullName: '',
-            email: '',
-            phone: '',
-            cnic: '',
-            password: '',
-            confirmPassword: '',
-            areaType: 'Urban',
-            sector: '',
-            ruralJurisdiction: ''
+            fullName: '', email: '', phone: '', cnic: '', password: '', confirmPassword: '',
+            areaType: 'Urban', sector: '', ruralJurisdiction: ''
           },
           otp: { email: '', otp: ['', '', '', '', '', ''] }
         }));
@@ -625,50 +518,43 @@ const RoleSelection = () => {
         alert(data.message);
       }
     } catch (error) {
-      console.error('OTP verification error:', error);
       alert('OTP verification failed. Please try again.');
     } finally {
-      setIsLoading(false);
+      setIsActionLoading(false);
     }
   };
 
   const handleResendOtp = async (e) => {
     e.preventDefault();
-    
     if (!formData.otp.email) {
       alert('Email not found. Please try registering again.');
       return;
     }
-
     try {
       const response = await fetch(`${dataService.apiBaseUrl}/auth/resend-otp`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: formData.otp.email }),
       });
-
       const data = await response.json();
-      
       if (data.success) {
         alert('OTP resent successfully! Check your email.');
       } else {
         alert(data.message);
       }
     } catch (error) {
-      console.error('Resend OTP error:', error);
       alert('Failed to resend OTP. Please try again.');
     }
   };
 
-  if (isLoading) {
+  if (isInitialLoading) {
     return (
       <div className="loader-bg">
         <div className="loader-content">
           <div className="loader-spinner">
             <i className="fas fa-cog"></i>
           </div>
+          <img className="loader-logo" src={logoUrl} alt={t('appTitle')} />
           <h2 className="loader-title">{t('appTitle')}</h2>
           <p className="loader-subtitle">{t('tagline')}</p>
         </div>
@@ -677,420 +563,417 @@ const RoleSelection = () => {
   }
 
   return (
-    <div className="role-selection-page">
-      <div className="container">
-        <div className="language-toggle-wrapper" style={{position: 'absolute', top: '20px', right: '20px', zIndex: 100}}>
-             <button 
-              onClick={toggleLanguage}
-              className="btn btn-sm btn-outline"
-              style={{ 
-                padding: '8px 16px', 
-                borderRadius: '20px', 
-                fontWeight: 'bold', 
-                background: 'rgba(255,255,255,0.2)',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255,255,255,0.3)',
-                color: 'white',
-                cursor: 'pointer'
-              }}
-            >
-              {language === 'english' ? 'اردو' : 'English'}
-            </button>
-        </div>
-        <div className="logo">
-          <h1>{t('appTitle')}</h1>
-          <p>{t('tagline')}</p>
-        </div>
+    <div className="login-v2-page">
+      {/* Background Animated Elements */}
+      <div className="animated-bg-overlay">
+        <div className="orb orb-1"></div>
+        <div className="orb orb-2"></div>
+        <div className="orb orb-3"></div>
+      </div>
 
-        <div className={`auth-container ${authAnimation}`}>
-          <div className="auth-card">
-            <div className="card-header">
-              <h2>{showOtp ? t('verify') : (activeTab === 'register' ? t('register') : t('login'))}</h2>
+      <div className="language-toggle-v2" onClick={toggleLanguage}>
+        <i className="fas fa-globe"></i> {language === 'english' ? 'اردو' : 'English'} <i className="fas fa-chevron-down"></i>
+      </div>
+
+      <div className="login-v2-container">
+        {/* Left Section */}
+        <div className="login-v2-left">
+          <div className="v2-branding">
+            <div className="v2-logo-box">
+              <img className="brand-logo" src={logoUrl} alt={t('appTitle')} />
             </div>
-            
+            <div className="v2-brand-info">
+              <h1>{t('appTitle')}</h1>
+              <p>{t('tagline')}</p>
+            </div>
+          </div>
 
-              
+          <div className="v2-hero">
+            <h2 className="v2-title">{t('yourVoice')}</h2>
+            <div className="v2-divider"></div>
+            <p className="v2-desc">
+              {t('heroText')}
+            </p>
+          </div>
 
-              <div className="form-content">
+          <div className="v2-features">
+            <div className="v2-feature-card">
+              <div className="v2-feature-icon"><i className="fas fa-shield-alt"></i></div>
+              <div className="v2-feature-content">
+                <h4>{t('secureReliable')}</h4>
+                <p>{t('secureDesc')}</p>
+              </div>
+            </div>
+            <div className="v2-feature-card purple">
+              <div className="v2-feature-icon"><i className="fas fa-sync-alt"></i></div>
+              <div className="v2-feature-content">
+                <h4>{t('transparentProcess')}</h4>
+                <p>{t('transparentDesc')}</p>
+              </div>
+            </div>
+            <div className="v2-feature-card pink">
+              <div className="v2-feature-icon"><i className="fas fa-users"></i></div>
+              <div className="v2-feature-content">
+                <h4>{t('strongerCommunity')}</h4>
+                <p>{t('communityDesc')}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="v2-trust-footer">
+            <i className="fas fa-check-circle"></i>
+            <span>{t('trustedBy')}</span>
+          </div>
+        </div>
+
+        {/* Right Section */}
+        <div className="login-v2-right">
+          <div className={`v2-auth-container ${authAnimation}`}>
+            <div className={`v2-auth-card ${isTransitioning ? 'v2-fade-out' : 'v2-fade-in'}`}>
+              <div className="v2-card-head">
+                <div className="v2-head-icon">
+                  <i className={`fas ${
+                    showOtp ? "fa-user-check" : 
+                    showForgot ? "fa-key" : 
+                    activeTab === 'register' ? "fa-user-plus" : "fa-user-circle"
+                  }`}></i>
+                </div>
+                <h2>
+                  {showOtp ? t('verifyAccount') : 
+                   showForgot ? t('resetPassword') : 
+                   activeTab === 'register' ? t('createAccount') : t('welcomeBack')}
+                </h2>
+                <p>
+                  {showOtp ? t('enterOtp') : 
+                   showForgot ? t('enterDetailsReset') : 
+                   activeTab === 'register' ? t('joinCommunity') : t('loginToContinue')}
+                </p>
+              </div>
+
+              <div className="v2-form-area">
                 {!showOtp ? (
                   <>
                     {!showForgot && (
-                      <form 
-                        className={`auth-form ${activeTab === 'login' ? 'active' : ''}`} 
-                        onSubmit={handleLogin}
-                      >
-                        <h3 className="form-title">{t('signInTitle')}</h3>
-                        
-                        <div className="input-group">
-                          <i className="fas fa-user"></i>
+                      <form className={`v2-form ${activeTab === 'login' ? 'active' : ''}`} onSubmit={handleLogin}>
+                        <div className="v2-input-group">
+                          <i className="fas fa-user v2-icon"></i>
                           <input 
                             type="text" 
-                            placeholder={t('emailPlaceholder')}
+                            placeholder={t('identifierPlaceholder') || "Email, Phone or CNIC"}
                             value={formData.login.identifier}
                             onChange={(e) => handleInputChange('login', 'identifier', e.target.value)}
                             required 
                           />
                         </div>
                         
-                        <div className="input-group">
-                          <i className="fas fa-lock"></i>
-                          <div style={{ position: 'relative' }}>
-                            <input 
-                              type={showLoginPassword ? "text" : "password"} 
-                              placeholder={t('passwordPlaceholder')}
-                              value={formData.login.password}
-                              onChange={(e) => handleInputChange('login', 'password', e.target.value)}
-                              style={{ paddingRight: '48px' }}
-                              required 
-                            />
+                        <div className="v2-input-group">
+                          <i className="fas fa-lock v2-icon"></i>
+                          <input 
+                            type={showLoginPassword ? "text" : "password"} 
+                            placeholder={t('passwordPlaceholder')}
+                            value={formData.login.password}
+                            onChange={(e) => handleInputChange('login', 'password', e.target.value)}
+                            required 
+                          />
+                          <button type="button" className="v2-toggle" onClick={() => setShowLoginPassword(!showLoginPassword)}>
+                            <i className={`fas ${showLoginPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                          </button>
+                        </div>
+                        
+                        <div className="v2-form-options">
+                          <label className="v2-checkbox">
+                            <input type="checkbox" />
+                            <span className="v2-checkmark"></span>
+                            <span>{t('rememberMe') || "Remember me"}</span>
+                          </label>
+                          <button type="button" className="v2-forgot" onClick={startForgotPassword}>{t('forgotPassword')}?</button>
+                        </div>
+                        
+                        <button type="submit" className="v2-btn-primary" disabled={isActionLoading}>
+                          {isActionLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-lock"></i> {t('loginBtn')}</>}
+                        </button>
+
+                        <div className="v2-or"><span>OR</span></div>
+                        
+                        <button type="button" className="v2-btn-outline" onClick={() => handleTabChange('register')}>
+                          <i className="fas fa-user-plus"></i> {t('createAccountBtn') || "Create New Account"}
+                        </button>
+                      </form>
+                    )}
+
+                    {showForgot && activeTab === 'login' && (
+                      <div className="v2-form active">
+                        {resetStage === 'email' && (
+                          <form onSubmit={handleForgotEmailSubmit}>
+                            <p className="v2-form-subtitle">{t('enterEmailReset') || "Enter your email to receive a 6-digit OTP code."}</p>
+                            <div className="v2-input-group">
+                              <i className="fas fa-envelope v2-icon"></i>
+                              <input 
+                                type="email" 
+                                placeholder={t('emailPlaceholder') || "Enter your email"} 
+                                value={formData.reset.email} 
+                                onChange={(e) => setFormData(prev => ({ ...prev, reset: { ...prev.reset, email: e.target.value } }))} 
+                                required 
+                              />
+                            </div>
+                            <button type="submit" className="v2-btn-primary" disabled={isActionLoading}>
+                              {isActionLoading ? <i className="fas fa-spinner fa-spin"></i> : t('sendOtp') || "Send OTP Code"}
+                            </button>
+                            <button type="button" className="v2-btn-text" onClick={() => setShowForgot(false)}>{t('backToLogin') || "Back to Login"}</button>
+                          </form>
+                        )}
+                        
+                        {resetStage === 'otp' && (
+                          <form onSubmit={handleVerifyResetOtp}>
+                            <p className="v2-form-subtitle">{t('enterOtpSentTo') || "Enter the 6-digit code sent to"} {formData.reset.email}</p>
+                            <div className="v2-otp-grid">
+                              {[0,1,2,3,4,5].map((index) => (
+                                <input 
+                                  key={index} 
+                                  id={`reset-otp-input-${index}`} 
+                                  type="text" 
+                                  maxLength="1" 
+                                  className="v2-otp-input" 
+                                  value={formData.reset.otp[index]} 
+                                  onChange={(e) => handleResetOtpChange(index, e.target.value)} 
+                                  required 
+                                />
+                              ))}
+                            </div>
+                            <button type="submit" className="v2-btn-primary" disabled={isActionLoading}>
+                              {isActionLoading ? <i className="fas fa-spinner fa-spin"></i> : t('verifyOtp') || "Verify OTP"}
+                            </button>
+                            <button type="button" className="v2-btn-text" onClick={() => setResetStage('email')}>{t('resendToDifferentEmail') || "Resend to different email"}</button>
+                          </form>
+                        )}
+
+                        {resetStage === 'password' && (
+                          <form onSubmit={handleResetPassword}>
+                            <p className="v2-form-subtitle">{t('setNewPasswordSubtitle') || "Set a strong password for your account."}</p>
+                            <div className="v2-input-group">
+                              <i className="fas fa-lock v2-icon"></i>
+                              <input 
+                                type="password" 
+                                placeholder={t('newPasswordPlaceholder') || "New Password"} 
+                                value={formData.reset.newPassword} 
+                                onChange={(e) => handleInputChange('reset', 'newPassword', e.target.value)} 
+                                required 
+                              />
+                            </div>
+
+                            {/* Password Requirements Indicator for Reset */}
+                            <div className="v2-password-requirements">
+                              <div className={`req-item ${passwordRequirements.length ? 'met' : ''}`}>
+                                <i className={`fas ${passwordRequirements.length ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                                <span>{t('min6Chars') || 'At least 6 characters'}</span>
+                              </div>
+                              <div className="req-row">
+                                <div className={`req-item ${passwordRequirements.uppercase ? 'met' : ''}`}>
+                                  <i className={`fas ${passwordRequirements.uppercase ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                                  <span>{t('uppercase') || 'Uppercase'}</span>
+                                </div>
+                                <div className={`req-item ${passwordRequirements.lowercase ? 'met' : ''}`}>
+                                  <i className={`fas ${passwordRequirements.lowercase ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                                  <span>{t('lowercase') || 'Lowercase'}</span>
+                                </div>
+                              </div>
+                              <div className="req-row">
+                                <div className={`req-item ${passwordRequirements.number ? 'met' : ''}`}>
+                                  <i className={`fas ${passwordRequirements.number ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                                  <span>{t('number') || 'Number'}</span>
+                                </div>
+                                <div className={`req-item ${passwordRequirements.special ? 'met' : ''}`}>
+                                  <i className={`fas ${passwordRequirements.special ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                                  <span>{t('specialChar') || 'Special Char'}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="v2-input-group">
+                              <i className="fas fa-lock v2-icon"></i>
+                              <input 
+                                type="password" 
+                                placeholder={t('confirmPasswordPlaceholder') || "Confirm New Password"} 
+                                value={formData.reset.confirmPassword} 
+                                onChange={(e) => setFormData(prev => ({ ...prev, reset: { ...prev.reset, confirmPassword: e.target.value } }))} 
+                                required 
+                              />
+                            </div>
+                            <button type="submit" className="v2-btn-primary" disabled={isActionLoading}>
+                              {isActionLoading ? <i className="fas fa-spinner fa-spin"></i> : t('resetPassword') || "Reset Password"}
+                            </button>
+                          </form>
+                        )}
+                      </div>
+                    )}
+                    
+                    {activeTab === 'register' && (
+                      <form className="v2-form active" onSubmit={handleRegister}>
+                        <div className="v2-input-group">
+                          <i className="fas fa-user v2-icon"></i>
+                          <input type="text" placeholder={t('fullNamePlaceholder') || "Full Name"} value={formData.register.fullName} onChange={(e) => handleInputChange('register', 'fullName', e.target.value)} required />
+                        </div>
+                        <div className="v2-input-group">
+                          <i className="fas fa-envelope v2-icon"></i>
+                          <input type="email" placeholder={t('emailPlaceholder') || "Email"} value={formData.register.email} onChange={(e) => handleInputChange('register', 'email', e.target.value)} required />
+                        </div>
+                        <div className="v2-input-group">
+                          <i className="fas fa-phone v2-icon"></i>
+                          <input type="tel" placeholder={t('phonePlaceholder') || "Phone"} value={formData.register.phone} onChange={(e) => handleInputChange('register', 'phone', e.target.value)} required />
+                        </div>
+                        <div className="v2-input-group">
+                          <i className="fas fa-id-card v2-icon"></i>
+                          <input type="text" placeholder={t('cnicPlaceholder') || "CNIC"} value={formData.register.cnic} onChange={(e) => handleInputChange('register', 'cnic', e.target.value)} maxLength="13" required />
+                        </div>
+
+                        {/* Area Selection */}
+                        <div className="v2-area-selection">
+                          <div className="v2-area-toggle">
                             <button 
                               type="button" 
-                              onClick={() => setShowLoginPassword(v => !v)} 
-                              aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
-                              title={showLoginPassword ? 'Hide password' : 'Show password'}
-                              style={{ 
-                                position: 'absolute', 
-                                right: 12, 
-                                top: '50%', 
-                                transform: 'translateY(-50%)', 
-                                background: 'transparent', 
-                                border: 'none', 
-                                color: 'var(--gray)', 
-                                cursor: 'pointer',
-                                zIndex: 2 
-                              }}
+                              className={formData.register.areaType === 'Urban' ? 'active' : ''} 
+                              onClick={() => handleInputChange('register', 'areaType', 'Urban')}
                             >
-                              <i className={`fas ${showLoginPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                              {t('urban') || 'Urban'}
+                            </button>
+                            <button 
+                              type="button" 
+                              className={formData.register.areaType === 'Rural' ? 'active' : ''} 
+                              onClick={() => handleInputChange('register', 'areaType', 'Rural')}
+                            >
+                              {t('rural') || 'Rural'}
                             </button>
                           </div>
+                          
+                          {formData.register.areaType === 'Urban' ? (
+                            <div className="v2-input-group">
+                              <i className="fas fa-city v2-icon">
+                              </i>
+                              <select 
+                                value={formData.register.sector} 
+                                onChange={(e) => handleInputChange('register', 'sector', e.target.value)}
+                                required
+                              >
+                                <option value="">{t('selectSector') || "Select Sector"}</option>
+                                {sectors.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                              </select>
+                            </div>
+                          ) : (
+                            <div className="v2-input-group">
+                              <i className="fas fa-map-marked-alt v2-icon">
+                              </i>
+                              <select 
+                                value={formData.register.ruralJurisdiction} 
+                                onChange={(e) => handleInputChange('register', 'ruralJurisdiction', e.target.value)}
+                                required
+                              >
+                                <option value="">{t('selectJurisdiction') || "Select Jurisdiction"}</option>
+                                {jurisdictions.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
+                              </select>
+                            </div>
+                          )}
                         </div>
-                        
-                        <div className="form-options">
-                          <label className="checkbox">
-                            <input type="checkbox" />
-                            <span>{t('rememberMe')}</span>
-                          </label>
-                          <button type="button" className="forgot-password" onClick={startForgotPassword}>{t('forgotPassword')}</button>
+
+                        <div className="v2-input-group">
+                          <i className="fas fa-lock v2-icon"></i>
+                          <input 
+                            type={showRegisterPassword ? "text" : "password"} 
+                            placeholder={t('passwordPlaceholder') || "Password"} 
+                            value={formData.register.password} 
+                            onChange={(e) => handleInputChange('register', 'password', e.target.value)} 
+                            required 
+                          />
+                          <button type="button" className="v2-toggle" onClick={() => setShowRegisterPassword(!showRegisterPassword)}>
+                            <i className={`fas ${showRegisterPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+                          </button>
                         </div>
-                        
-                        <button type="submit" className="btn primary-btn" disabled={isLoading}>
-                          {isLoading ? <i className="fas fa-spinner fa-spin"></i> : t('login')}
+
+                        {/* Password Requirements Indicator */}
+                        <div className="v2-password-requirements">
+                          <div className={`req-item ${passwordRequirements.length ? 'met' : ''}`}>
+                            <i className={`fas ${passwordRequirements.length ? 'fa-check-circle' : 'fa-circle'}`}></i>
+                            <span>{t('min6Chars') || 'At least 6 characters'}</span>
+                          </div>
+                          <div className="req-row">
+                            <div className={`req-item ${passwordRequirements.uppercase ? 'met' : ''}`}>
+                              <i className="fas fa-check-circle">
+                              </i>
+                              <span>{t('uppercase') || 'Uppercase'}</span>
+                            </div>
+                            <div className={`req-item ${passwordRequirements.lowercase ? 'met' : ''}`}>
+                              <i className="fas fa-check-circle">
+                              </i>
+                              <span>{t('lowercase') || 'Lowercase'}</span>
+                            </div>
+                          </div>
+                          <div className="req-row">
+                            <div className={`req-item ${passwordRequirements.number ? 'met' : ''}`}>
+                              <i className="fas fa-check-circle">
+                              </i>
+                              <span>{t('number') || 'Number'}</span>
+                            </div>
+                            <div className={`req-item ${passwordRequirements.special ? 'met' : ''}`}>
+                              <i className="fas fa-check-circle">
+                              </i>
+                              <span>{t('specialChar') || 'Special Char'}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button type="submit" className="v2-btn-primary" disabled={isActionLoading}>
+                          {isActionLoading ? <i className="fas fa-spinner fa-spin"></i> : t('createAccount')}
                         </button>
-                        
-                <div className="card-footer">
-                  <button type="button" className="create-account-btn" onClick={() => handleTabChange('register')}>{t('createAccount')}</button>
-                </div>
-              </form>
-            )}
-
-            {showForgot && activeTab === 'login' && (
-              <div className="auth-form active">
-                {resetStage === 'email' && (
-                  <form onSubmit={handleForgotEmailSubmit}>
-                    <h3 className="form-title">{t('resetPassword')}</h3>
-                    <div className="input-group">
-                      <i className="fas fa-envelope"></i>
-                      <input type="email" placeholder={t('emailPlaceholder')} value={formData.reset.email} onChange={(e) => setFormData(prev => ({ ...prev, reset: { ...prev.reset, email: e.target.value } }))} required />
-                    </div>
-                    <button type="submit" className="btn primary-btn" disabled={isLoading}>{isLoading ? <i className="fas fa-spinner fa-spin"></i> : t('sendOtp')}</button>
-                    <div className="form-options" style={{ justifyContent: 'center' }}>
-                      <button type="button" className="forgot-password" onClick={() => setShowForgot(false)}>{t('back')}</button>
-                    </div>
-                  </form>
-                )}
-                {resetStage === 'otp' && (
-                  <form onSubmit={handleVerifyResetOtp} className="otp-form">
-                    <h3 className="form-title">{t('enterOtp')}</h3>
-                    <p className="otp-description">{t('otpDescription')} <strong>{formData.reset.email}</strong></p>
-                    <div className="otp-inputs">
-                      {[0,1,2,3,4,5].map((index) => (
-                        <input key={index} id={`reset-otp-input-${index}`} type="text" maxLength="1" className="otp-input" value={formData.reset.otp[index]} onChange={(e) => handleResetOtpChange(index, e.target.value)} required />
-                      ))}
-                    </div>
-                    <button type="submit" className="btn primary-btn" disabled={isLoading}>{isLoading ? <i className="fas fa-spinner fa-spin"></i> : t('verify')}</button>
-                    <div className="form-options" style={{ justifyContent: 'center' }}>
-                      <button type="button" className="forgot-password" onClick={() => setResetStage('email')}>{t('changeEmail')}</button>
-                    </div>
-                  </form>
-                )}
-                {resetStage === 'password' && (
-                  <form onSubmit={handleResetPassword}>
-                    <h3 className="form-title">{t('setNewPassword')}</h3>
-                    <div className="input-group">
-                      <i className="fas fa-lock"></i>
-                      <input type="password" placeholder={t('setNewPassword')} value={formData.reset.newPassword} onChange={(e) => setFormData(prev => ({ ...prev, reset: { ...prev.reset, newPassword: e.target.value } }))} required />
-                    </div>
-                    <div className="input-group">
-                      <i className="fas fa-lock"></i>
-                      <input type="password" placeholder={t('passwordPlaceholder')} value={formData.reset.confirmPassword} onChange={(e) => setFormData(prev => ({ ...prev, reset: { ...prev.reset, confirmPassword: e.target.value } }))} required />
-                    </div>
-                    <button type="submit" className="btn primary-btn" disabled={isLoading}>{isLoading ? <i className="fas fa-spinner fa-spin"></i> : t('resetPassword')}</button>
-                    <div className="form-options" style={{ justifyContent: 'center' }}>
-                      <button type="button" className="forgot-password" onClick={() => setResetStage('otp')}>{t('back')}</button>
-                    </div>
-                  </form>
-                )}
-              </div>
-            )}
-
-            {activeTab === 'register' && (
-              <form 
-                className={`auth-form ${activeTab === 'register' ? 'active' : ''}`} 
-                onSubmit={handleRegister}
-              >
-                <h3 className="form-title">{t('createAccount')}</h3>
-                
-                <div className="input-row">
-                  <div className="input-group">
-                    <i className="fas fa-user"></i>
-                    <input 
-                      type="text" 
-                      placeholder={t('fullName')}
-                      value={formData.register.fullName}
-                      onChange={(e) => handleInputChange('register', 'fullName', e.target.value)}
-                      className={(regTouched.fullName ? (regErrors.fullName ? 'is-invalid' : 'is-valid') : '')}
-                      required 
-                    />
-                    {regTouched.fullName && regErrors.fullName && (<small className="helper-text invalid">{regErrors.fullName}</small>)}
-                  </div>
-                </div>
-                
-                <div className="input-group">
-                  <i className="fas fa-envelope"></i>
-                  <input 
-                    type="email" 
-                    placeholder={t('email')}
-                    value={formData.register.email}
-                    onChange={(e) => handleInputChange('register', 'email', e.target.value)}
-                    className={(regTouched.email ? (regErrors.email ? 'is-invalid' : 'is-valid') : '')}
-                    required 
-                  />
-                  {regTouched.email && regErrors.email && (<small className="helper-text invalid">{regErrors.email}</small>)}
-                  {regTouched.email && !regErrors.email && emailAvailability === 'available' && (<small className="helper-text valid"><i className="fas fa-check"></i> {t('email')} available</small>)}
-                  {regTouched.email && !regErrors.email && emailAvailability === 'taken' && (<small className="helper-text invalid"><i className="fas fa-times"></i> {t('email')} already in use</small>)}
-                </div>
-                
-                <div className="input-row">
-                  <div className="input-group">
-                    <i className="fas fa-phone"></i>
-                    <input 
-                      type="tel" 
-                      placeholder={t('phone')}
-                      value={formData.register.phone}
-                      onChange={(e) => handleInputChange('register', 'phone', e.target.value)}
-                      className={(regTouched.phone ? (regErrors.phone ? 'is-invalid' : 'is-valid') : '')}
-                      required 
-                    />
-                    {regTouched.phone && regErrors.phone && (<small className="helper-text invalid">{regErrors.phone}</small>)}
-                  </div>
-                  <div className="input-group">
-                    <i className="fas fa-id-card"></i>
-                    <input 
-                      type="text" 
-                      placeholder={t('cnic')}
-                      value={formData.register.cnic}
-                      onChange={(e) => handleInputChange('register', 'cnic', e.target.value)}
-                      maxLength="13"
-                      className={(regTouched.cnic ? (regErrors.cnic ? 'is-invalid' : 'is-valid') : '')}
-                      required 
-                    />
-                    {regTouched.cnic && regErrors.cnic && (<small className="helper-text invalid">{regErrors.cnic}</small>)}
-                  </div>
-                </div>
-                <div className="input-row">
-                  <div className="input-group">
-                    <i className="fas fa-map"></i>
-                    <select
-                      className="form-control"
-                      value={formData.register.areaType || 'Urban'}
-                      onChange={(e) => setFormData(prev => ({ 
-                        ...prev, 
-                        register: { 
-                          ...prev.register, 
-                          areaType: e.target.value, 
-                          sector: '', 
-                          ruralJurisdiction: '' 
-                        } 
-                      }))}
-                      required
-                    >
-                      <option value="Urban">Urban</option>
-                      <option value="Rural">Rural</option>
-                    </select>
-                  </div>
-                  
-                  {formData.register.areaType === 'Urban' && (
-                    <div className="input-group">
-                      <i className="fas fa-building"></i>
-                      <select
-                        className="form-control"
-                        value={formData.register.sector}
-                        onChange={(e) => handleInputChange('register', 'sector', e.target.value)}
-                        required
-                      >
-                        <option value="">Select Sector</option>
-                        {urbanSectors.map(s => (
-                          <option key={s._id} value={s.name}>{s.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {formData.register.areaType === 'Rural' && (
-                    <div className="input-group">
-                      <i className="fas fa-tree"></i>
-                      <select
-                        className="form-control"
-                        value={formData.register.ruralJurisdiction}
-                        onChange={(e) => handleInputChange('register', 'ruralJurisdiction', e.target.value)}
-                        required
-                      >
-                        <option value="">Select Jurisdiction</option>
-                        {ruralJurisdictions.map(j => (
-                          <option key={j._id} value={j.name}>{j.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-                
-                <div className="input-group">
-                  <i className="fas fa-lock"></i>
-                  <div style={{ position: 'relative' }}>
-                    <input 
-                      type={showRegisterPassword ? "text" : "password"} 
-                      placeholder={t('passwordPlaceholder')}
-                      value={formData.register.password}
-                      onChange={(e) => handleInputChange('register', 'password', e.target.value)}
-                      style={{ paddingRight: '48px' }}
-                      className={(regTouched.password ? (regErrors.password ? 'is-invalid' : 'is-valid') : '')}
-                      required 
-                    />
-                    <button 
-                      type="button" 
-                      onClick={() => setShowRegisterPassword(v => !v)} 
-                      aria-label={showRegisterPassword ? 'Hide password' : 'Show password'}
-                      title={showRegisterPassword ? 'Hide password' : 'Show password'}
-                      style={{ 
-                        position: 'absolute', 
-                        right: 12, 
-                        top: '50%', 
-                        transform: 'translateY(-50%)', 
-                        background: 'transparent', 
-                        border: 'none', 
-                        color: 'var(--gray)', 
-                        cursor: 'pointer',
-                        zIndex: 2 
-                      }}
-                    >
-                      <i className={`fas ${showRegisterPassword ? 'fa-eye-slash' : 'fa-eye'}`}></i>
-                    </button>
-                  </div>
-                  {regTouched.password && regErrors.password && (<small className="helper-text invalid">{regErrors.password}</small>)}
-                  <div className="password-strength">
-                    <div className={`bar ${passwordScore >= 1 ? 'on' : ''}`}></div>
-                    <div className={`bar ${passwordScore >= 2 ? 'on' : ''}`}></div>
-                    <div className={`bar ${passwordScore >= 3 ? 'on' : ''}`}></div>
-                    <div className={`bar ${passwordScore >= 4 ? 'on' : ''}`}></div>
-                  </div>
-                </div>
-                
-                <div className="input-group">
-                  <i className="fas fa-lock"></i>
-                  <div style={{ position: 'relative' }}>
-                    <input 
-                      type={showRegisterConfirm ? "text" : "password"} 
-                      placeholder={t('confirmPassword')}
-                      value={formData.register.confirmPassword}
-                      onChange={(e) => handleInputChange('register', 'confirmPassword', e.target.value)}
-                      style={{ paddingRight: '48px' }}
-                      className={(regTouched.confirmPassword ? (regErrors.confirmPassword ? 'is-invalid' : 'is-valid') : '')}
-                      required 
-                    />
-                    <button 
-                      type="button" 
-                      onClick={() => setShowRegisterConfirm(v => !v)} 
-                      aria-label={showRegisterConfirm ? 'Hide password' : 'Show password'}
-                      title={showRegisterConfirm ? 'Hide password' : 'Show password'}
-                      style={{ 
-                        position: 'absolute', 
-                        right: 12, 
-                        top: '50%', 
-                        transform: 'translateY(-50%)', 
-                        background: 'transparent', 
-                        border: 'none', 
-                        color: 'var(--gray)', 
-                        cursor: 'pointer',
-                        zIndex: 2 
-                      }}
-                    >
-                      <i className={`fas ${showRegisterConfirm ? 'fa-eye-slash' : 'fa-eye'}`}></i>
-                    </button>
-                  </div>
-                  {regTouched.confirmPassword && regErrors.confirmPassword && (<small className="helper-text invalid">{regErrors.confirmPassword}</small>)}
-                </div>
-                
-                <div className="form-options">
-                  <label className="checkbox">
-                    <input type="checkbox" required />
-                    <span>{t('agreeTerms')}</span>
-                  </label>
-                </div>
-                
-                <button type="submit" className="btn primary-btn" disabled={isLoading}>
-                  {isLoading ? <i className="fas fa-spinner fa-spin"></i> : t('createAccount')}
-                </button>
-                <div className="form-options" style={{ justifyContent: 'center' }}>
-                  <button type="button" className="forgot-password" onClick={() => handleTabChange('login')}>{t('back')}</button>
-                </div>
-              </form>
-            )}
-
-            {false && (<div />)}
+                        <button type="button" className="v2-btn-text" onClick={() => handleTabChange('login')}>{t('backToLogin') || "Back to Login"}</button>
+                      </form>
+                    )}
                   </>
                 ) : (
-                  <form className="auth-form active otp-form" onSubmit={handleOtpVerify}>
-                    <h3 className="form-title">{t('verify')}</h3>
-                    <p className="otp-description">
-                      {t('otpDescription')} <strong>{formData.otp.email}</strong>
-                    </p>
-                    
-                    <div className="otp-inputs">
-                      {[0,1,2,3,4,5].map((index) => (
+                  <form className="v2-form active" onSubmit={handleOtpVerify}>
+                    <div className="v2-otp-grid">
+                      {[0,1,2,3,4,5].map((i) => (
                         <input 
-                          key={index}
-                          id={`otp-input-${index}`}
+                          key={i} 
+                          id={`otp-input-${i}`}
                           type="text" 
                           maxLength="1" 
-                          className="otp-input"
-                          value={formData.otp.otp[index]}
-                          onChange={(e) => handleOtpChange(index, e.target.value)}
-                          onKeyDown={(e) => {
-                            // Handle backspace
-                            if (e.key === 'Backspace' && !formData.otp.otp[index] && index > 0) {
-                              const prevInput = document.getElementById(`otp-input-${index - 1}`);
-                              if (prevInput) prevInput.focus();
-                            }
-                          }}
+                          className="v2-otp-input" 
+                          value={formData.otp.otp[i]} 
+                          onChange={(e) => handleOtpChange(i, e.target.value)} 
                           required 
                         />
                       ))}
                     </div>
-                    
-                    <button type="submit" className="btn primary-btn" disabled={isLoading}>
-                      {isLoading ? <i className="fas fa-spinner fa-spin"></i> : t('verify')}
+                    <button type="submit" className="v2-btn-primary" disabled={isActionLoading}>
+                      {isActionLoading ? <i className="fas fa-spinner fa-spin"></i> : "Verify & Register"}
                     </button>
-                    
-                    <div className="otp-resend">
-                      <p>{t('resendOtpPrompt')} <button type="button" className="forgot-password" onClick={handleResendOtp}>{t('resendOtp')}</button></p>
+                    <div className="v2-resend-area">
+                       <button type="button" className="v2-btn-text" onClick={handleResendOtp}>Resend OTP Code</button>
                     </div>
                   </form>
                 )}
               </div>
-              
-              
             </div>
           </div>
+
+          <div className="v2-bottom-badges">
+            <div className="v2-badge">
+              <div className="v2-badge-icon"><i className="fas fa-shield-check"></i></div>
+              <div className="v2-badge-info"><strong>{t('secure100')}</strong><span>{t('dataProtection')}</span></div>
+            </div>
+            <div className="v2-badge">
+              <div className="v2-badge-icon purple"><i className="fas fa-bolt"></i></div>
+              <div className="v2-badge-info"><strong>{t('easyToUse')}</strong><span>{t('simpleFast')}</span></div>
+            </div>
+            <div className="v2-badge">
+              <div className="v2-badge-icon pink"><i className="fas fa-headset"></i></div>
+              <div className="v2-badge-info"><strong>{t('support247')}</strong><span>{t('hereToHelp')}</span></div>
+            </div>
+          </div>
+          
+          <div className="v2-copyright">
+            © 2026 Awaz e Shehr. All rights reserved.
+          </div>
+        </div>
       </div>
     </div>
   );
