@@ -21,8 +21,6 @@ const RoleSelection = () => {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showRegisterPassword, setShowRegisterPassword] = useState(false);
-  const [sectors, setSectors] = useState([]);
-  const [jurisdictions, setJurisdictions] = useState([]);
   const [passwordRequirements, setPasswordRequirements] = useState({
     length: false,
     uppercase: false,
@@ -39,10 +37,7 @@ const RoleSelection = () => {
       phone: '', 
       cnic: '', 
       password: '', 
-      confirmPassword: '',
-      areaType: 'Urban',
-      sector: '',
-      ruralJurisdiction: ''
+      confirmPassword: ''
     },
     otp: { email: '', otp: ['', '', '', '', '', ''] },
     reset: { email: '', otp: ['', '', '', '', '', ''], newPassword: '', confirmPassword: '' }
@@ -61,23 +56,6 @@ const RoleSelection = () => {
       setAuthAnimation('slide-in');
     }
   }, [isInitialLoading]);
-
-  // Fetch registration data
-  useEffect(() => {
-    const fetchRegData = async () => {
-      try {
-        const [sData, jData] = await Promise.all([
-          dataService.getSectors(),
-          dataService.getJurisdictions()
-        ]);
-        setSectors(sData || []);
-        setJurisdictions(jData || []);
-      } catch (error) {
-        console.error("Error fetching registration data:", error);
-      }
-    };
-    fetchRegData();
-  }, []);
 
   // Particle System
   useEffect(() => {
@@ -442,13 +420,6 @@ const RoleSelection = () => {
       if (password !== confirmPassword) {
         errors.push('Passwords do not match');
       }
-
-      // Validate Area Selection
-      if (formData.register.areaType === 'Urban' && !formData.register.sector) {
-        errors.push('Please select a Sector');
-      } else if (formData.register.areaType === 'Rural' && !formData.register.ruralJurisdiction) {
-        errors.push('Please select a Jurisdiction');
-      }
     }
     
     return errors;
@@ -509,8 +480,7 @@ const RoleSelection = () => {
         setFormData(prev => ({
           ...prev,
           register: {
-            fullName: '', email: '', phone: '', cnic: '', password: '', confirmPassword: '',
-            areaType: 'Urban', sector: '', ruralJurisdiction: ''
+            fullName: '', email: '', phone: '', cnic: '', password: '', confirmPassword: ''
           },
           otp: { email: '', otp: ['', '', '', '', '', ''] }
         }));
@@ -824,54 +794,6 @@ const RoleSelection = () => {
                         <div className="v2-input-group">
                           <i className="fas fa-id-card v2-icon"></i>
                           <input type="text" placeholder={t('cnicPlaceholder') || "CNIC"} value={formData.register.cnic} onChange={(e) => handleInputChange('register', 'cnic', e.target.value)} maxLength="13" required />
-                        </div>
-
-                        {/* Area Selection */}
-                        <div className="v2-area-selection">
-                          <div className="v2-area-toggle">
-                            <button 
-                              type="button" 
-                              className={formData.register.areaType === 'Urban' ? 'active' : ''} 
-                              onClick={() => handleInputChange('register', 'areaType', 'Urban')}
-                            >
-                              {t('urban') || 'Urban'}
-                            </button>
-                            <button 
-                              type="button" 
-                              className={formData.register.areaType === 'Rural' ? 'active' : ''} 
-                              onClick={() => handleInputChange('register', 'areaType', 'Rural')}
-                            >
-                              {t('rural') || 'Rural'}
-                            </button>
-                          </div>
-                          
-                          {formData.register.areaType === 'Urban' ? (
-                            <div className="v2-input-group">
-                              <i className="fas fa-city v2-icon">
-                              </i>
-                              <select 
-                                value={formData.register.sector} 
-                                onChange={(e) => handleInputChange('register', 'sector', e.target.value)}
-                                required
-                              >
-                                <option value="">{t('selectSector') || "Select Sector"}</option>
-                                {sectors.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                              </select>
-                            </div>
-                          ) : (
-                            <div className="v2-input-group">
-                              <i className="fas fa-map-marked-alt v2-icon">
-                              </i>
-                              <select 
-                                value={formData.register.ruralJurisdiction} 
-                                onChange={(e) => handleInputChange('register', 'ruralJurisdiction', e.target.value)}
-                                required
-                              >
-                                <option value="">{t('selectJurisdiction') || "Select Jurisdiction"}</option>
-                                {jurisdictions.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
-                              </select>
-                            </div>
-                          )}
                         </div>
 
                         <div className="v2-input-group">

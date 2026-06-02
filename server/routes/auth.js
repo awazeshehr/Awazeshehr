@@ -225,7 +225,7 @@ router.get('/rural-jurisdictions', async (req, res) => {
 // Citizen registration with validation
 router.post('/register', async (req, res) => {
   try {
-    const { fullName, email, phone, cnic, password, confirmPassword, areaType, sector, ruralJurisdiction } = req.body;
+    const { fullName, email, phone, cnic, password, confirmPassword } = req.body;
 
     // Validate all registration fields
     const validation = validateCitizenRegistration({
@@ -262,9 +262,9 @@ router.post('/register', async (req, res) => {
       cnic,
       password,
       role: 'citizen',
-      areaType: areaType || 'Urban',
-      sector: (areaType === 'Urban') ? sector : '',
-      ruralJurisdiction: (areaType === 'Rural') ? ruralJurisdiction : ''
+      areaType: 'Urban',
+      sector: '',
+      ruralJurisdiction: ''
     });
 
     try {

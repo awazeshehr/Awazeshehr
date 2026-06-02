@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Awaz e Shehr",
+    "slug": "awaz-e-shehr-citizen",
+    "scheme": "awazeshehr",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash_new.png",
+      "backgroundColor": "#f5f5f5",
+      "resizeMode": "contain"
+    },
+    "android": {
+      "package": "com.awazeshehr.citizen",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#f5f5f5"
+      }
+    },
+    "androidStatusBar": {
+      "translucent": false,
+      "barStyle": "dark-content",
+      "backgroundColor": "#f5f5f5"
+    },
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "extra": {
+      "API_URL": "https://backend-ui1u.onrender.com",
+      "eas": {
+        "projectId": "95221835-2cc3-4db6-89ac-28cf8cfde984"
+      }
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}
