@@ -13,12 +13,28 @@ const SuperAdminDashboard = () => {
   const { t, language, toggleLanguage } = useLanguage();
   const [deps, setDeps] = useState([]);
   const [complaints, setComplaints] = useState([]);
-  const [newDep, setNewDep] = useState({ name: '', location: '', jurisdiction: '', servicesOffered: '', areaTypes: ['Urban'], sectors: [], ruralJurisdictions: [] });
+  const [newDep, setNewDep] = useState({ name: '', location: '', servicesOffered: '', areaTypes: ['Urban'], sectors: [], ruralJurisdictions: [] });
   const [newDepLocationValidated, setNewDepLocationValidated] = useState(false);
   const [newDepLocationValidatedText, setNewDepLocationValidatedText] = useState('');
   const [newDepLocationValidating, setNewDepLocationValidating] = useState(false);
-  const [newUser, setNewUser] = useState({ role: 'dept-admin', fullName: '', email: '', password: '', departmentId: '', areaType: 'Urban' });
+  const [newUser, setNewUser] = useState({
+    role: 'dept-admin',
+    fullName: '',
+    email: '',
+    password: '',
+    departmentId: '',
+    areaType: 'Urban',
+    sector: '',
+    ruralJurisdiction: ''
+  });
+  const [adminStep, setAdminStep] = useState(1);
+  const [adminConfirmPassword, setAdminConfirmPassword] = useState('');
+  const [adminUrbanSectorId, setAdminUrbanSectorId] = useState('');
+  const [adminSubsectors, setAdminSubsectors] = useState([]);
+  const [adminSelectedSubsectorIds, setAdminSelectedSubsectorIds] = useState([]);
+  const [adminSubsectorDeptIdsBySubsectorId, setAdminSubsectorDeptIdsBySubsectorId] = useState({});
   const [users, setUsers] = useState({ admins: [], officers: [], citizens: [] });
+  const [userMgmtRole, setUserMgmtRole] = useState('');
   const [trends, setTrends] = useState([]);
   const [perf, setPerf] = useState([]);
   const [reportPreset, setReportPreset] = useState('weekly');
@@ -76,6 +92,7 @@ const SuperAdminDashboard = () => {
   const [editDepLocationValidated, setEditDepLocationValidated] = useState(false);
   const [editDepLocationValidatedText, setEditDepLocationValidatedText] = useState('');
   const [editDepLocationValidating, setEditDepLocationValidating] = useState(false);
+  const [editDepBaselineKey, setEditDepBaselineKey] = useState('');
   const [coverageNormalizationRan, setCoverageNormalizationRan] = useState(false);
   const [hierarchyTab, setHierarchyTab] = useState('urban');
   const [hierarchySearch, setHierarchySearch] = useState('');
@@ -162,11 +179,15 @@ const SuperAdminDashboard = () => {
     if (areaType === 'Urban') {
       const s = String(sector || '').trim();
       if (!s) return true;
-      return Array.isArray(dep?.sectors) && dep.sectors.some(x => normalizeKey(x) === normalizeKey(s));
+      const list = Array.isArray(dep?.sectors) ? dep.sectors : [];
+      if (list.length === 0) return true;
+      return list.some(x => normalizeKey(x) === normalizeKey(s));
     }
     const r = String(ruralJurisdiction || '').trim();
     if (!r) return true;
-    return Array.isArray(dep?.ruralJurisdictions) && dep.ruralJurisdictions.some(x => normalizeKey(x) === normalizeKey(r));
+    const list = Array.isArray(dep?.ruralJurisdictions) ? dep.ruralJurisdictions : [];
+    if (list.length === 0) return true;
+    return list.some(x => normalizeKey(x) === normalizeKey(r));
   }, []);
 
   const depOffersService = useCallback((dep, service) => {
@@ -201,11 +222,23 @@ const SuperAdminDashboard = () => {
     return parts.join(' | ');
   };
 
+  const buildJurisdictionDisplayText = useCallback((dep) => {
+    const types = Array.isArray(dep?.areaTypes) ? dep.areaTypes : [];
+    const parts = [];
+    if (types.includes('Urban')) {
+      const s = Array.isArray(dep?.sectors) ? dep.sectors.filter(Boolean) : [];
+      parts.push(`${t('urban') || 'Urban'}: ${s.length ? s.join(', ') : (t('selectSectors') || 'Select sectors')}`);
+    }
+    if (types.includes('Rural')) {
+      const r = Array.isArray(dep?.ruralJurisdictions) ? dep.ruralJurisdictions.filter(Boolean) : [];
+      parts.push(`${t('rural') || 'Rural'}: ${r.length ? r.join(', ') : (t('selectRuralJurisdictions') || 'Select rural jurisdictions')}`);
+    }
+    return parts.join(' | ');
+  }, [t]);
+
   const isCoverageReady = (dep) => {
     const types = Array.isArray(dep?.areaTypes) ? dep.areaTypes : [];
     if (types.length === 0) return false;
-    if (types.includes('Urban') && ((!Array.isArray(dep?.sectors)) || dep.sectors.length === 0)) return false;
-    if (types.includes('Rural') && ((!Array.isArray(dep?.ruralJurisdictions)) || dep.ruralJurisdictions.length === 0)) return false;
     return true;
   };
 
@@ -426,18 +459,113 @@ const SuperAdminDashboard = () => {
     const address = String(rawAddress || '').trim();
     if (!address) return { ok: false, message: t('addressIsRequired') || 'Address is required' };
 
-    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&q=${encodeURIComponent(address)}`;
-    const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
-    const data = await resp.json();
-    const top = Array.isArray(data) ? data[0] : null;
-    const displayName = String(top?.display_name || '').trim();
-    const displayLower = displayName.toLowerCase();
-    if (!displayName || !displayLower.includes('islamabad')) {
-      return { ok: false, message: t('addressMustBeWithinIslamabad') || 'Address must be within Islamabad', displayName: displayName || '' };
-    }
+    const depSectors = Array.isArray(dep?.sectors) ? dep.sectors.map(s => String(s || '').trim()).filter(Boolean) : [];
+    const depRural = Array.isArray(dep?.ruralJurisdictions) ? dep.ruralJurisdictions.map(s => String(s || '').trim()).filter(Boolean) : [];
+    const tokens = [...depSectors, ...depRural].map(s => s.toLowerCase());
 
-    return { ok: true, displayName };
+    const withinBbox = (lat, lon) => {
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+      return lat >= 32.8 && lat <= 34.6 && lon >= 72.2 && lon <= 74.4;
+    };
+
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=5&countrycodes=pk&q=${encodeURIComponent(address)}`;
+      const resp = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (!resp.ok) {
+        return { ok: false, message: t('addressValidationFailed') || 'Address validation failed. Please try again.' };
+      }
+      const data = await resp.json();
+      const list = Array.isArray(data) ? data : [];
+      if (list.length === 0) {
+        return { ok: false, message: t('addressNotFound') || 'Address not found. Try adding “Islamabad” or a sector name.' };
+      }
+
+      const normalize = (v) => String(v || '').trim().toLowerCase();
+      const isIslamabadMetroText = (text) => {
+        const s = normalize(text);
+        if (!s) return false;
+        if (s.includes('islamabad')) return true;
+        if (s.includes('islamabad capital territory')) return true;
+        if (s.includes('capital territory')) return true;
+        if (s.includes('ict')) return true;
+        if (s.includes('rawalpindi')) return true;
+        return tokens.some(tok => tok && s.includes(tok));
+      };
+
+      const picked = list.find(r => {
+        const display = String(r?.display_name || '');
+        const addr = r?.address || {};
+        const combined = `${display} ${addr?.city || ''} ${addr?.county || ''} ${addr?.state || ''} ${addr?.state_district || ''}`;
+        const lat = Number(r?.lat);
+        const lon = Number(r?.lon);
+        return isIslamabadMetroText(combined) || withinBbox(lat, lon);
+      }) || list[0];
+
+      const displayName = String(picked?.display_name || '').trim();
+      const lat = Number(picked?.lat);
+      const lon = Number(picked?.lon);
+      const ok = isIslamabadMetroText(displayName) || withinBbox(lat, lon);
+      if (!ok) {
+        return {
+          ok: false,
+          message: t('addressMustBeWithinIslamabad') || 'Address must be within Islamabad',
+          displayName: displayName || ''
+        };
+      }
+
+      return { ok: true, displayName };
+    } catch (e) {
+      return { ok: false, message: t('addressValidationFailed') || 'Address validation failed. Please try again.' };
+    }
   };
+
+  const makeDepValidationKey = useCallback((dep) => {
+    const location = String(dep?.location || '').trim().toLowerCase();
+    const areaTypes = Array.isArray(dep?.areaTypes) ? dep.areaTypes.map(String) : [];
+    const sectors = areaTypes.includes('Urban') && Array.isArray(dep?.sectors)
+      ? dep.sectors.map(s => String(s || '').trim()).filter(Boolean)
+      : [];
+    const rural = areaTypes.includes('Rural') && Array.isArray(dep?.ruralJurisdictions)
+      ? dep.ruralJurisdictions.map(s => String(s || '').trim()).filter(Boolean)
+      : [];
+    const normalize = (arr) => arr.map(x => String(x || '').trim()).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    return JSON.stringify({
+      location,
+      areaTypes: normalize(areaTypes),
+      sectors: normalize(sectors),
+      rural: normalize(rural)
+    });
+  }, []);
+
+  const normalizeCoverageNames = useCallback((dep) => {
+    const types = Array.isArray(dep?.areaTypes) ? dep.areaTypes : [];
+    const sectorNameMap = new Map(
+      (urbanSectors || [])
+        .map(s => String(s?.name || '').trim())
+        .filter(Boolean)
+        .map(name => [name.toLowerCase(), name])
+    );
+    const ruralNameMap = new Map(
+      (ruralJurisdictions || [])
+        .map(j => String(j?.name || '').trim())
+        .filter(Boolean)
+        .map(name => [name.toLowerCase(), name])
+    );
+
+    const normalizeList = (arr, map) => {
+      const raw = Array.isArray(arr) ? arr : [];
+      const canonical = raw
+        .map(v => String(v || '').trim())
+        .filter(Boolean)
+        .map(v => map.get(v.toLowerCase()) || v);
+      return Array.from(new Set(canonical));
+    };
+
+    const next = { ...dep };
+    next.sectors = types.includes('Urban') ? normalizeList(dep?.sectors, sectorNameMap) : [];
+    next.ruralJurisdictions = types.includes('Rural') ? normalizeList(dep?.ruralJurisdictions, ruralNameMap) : [];
+    return next;
+  }, [urbanSectors, ruralJurisdictions]);
 
   const feedbackAnalytics = React.useMemo(() => {
     const feedbacks = (complaints || [])
@@ -630,8 +758,105 @@ const SuperAdminDashboard = () => {
     return (urbanSectors || []).map(s => s?.name).filter(Boolean);
   }, [urbanSectors]);
 
+  useEffect(() => {
+    if (activePage !== 'admin' && activePage !== 'users') return;
+    loadUsers();
+    refreshDeps();
+    refreshComplaints();
+    loadHierarchy();
+  }, [activePage, loadUsers, refreshDeps, refreshComplaints, loadHierarchy]);
+
+  useEffect(() => {
+    if (activePage !== 'users') setUserMgmtRole('');
+  }, [activePage]);
+
+  const adminSelectedUrbanSector = React.useMemo(() => {
+    if (newUser.areaType !== 'Urban') return null;
+    const nameKey = String(newUser.sector || '').trim().toLowerCase();
+    if (!nameKey) return null;
+    return (urbanSectors || []).find(s => String(s?.name || '').trim().toLowerCase() === nameKey) || null;
+  }, [newUser.areaType, newUser.sector, urbanSectors]);
+
+  useEffect(() => {
+    setAdminSelectedSubsectorIds([]);
+    setAdminSubsectorDeptIdsBySubsectorId({});
+    setAdminSubsectors([]);
+    setAdminUrbanSectorId('');
+    setNewUser(prev => ({
+      ...prev,
+      sector: prev.areaType === 'Urban' ? prev.sector : '',
+      ruralJurisdiction: prev.areaType === 'Rural' ? prev.ruralJurisdiction : '',
+      departmentId: ''
+    }));
+  }, [newUser.areaType]);
+
+  useEffect(() => {
+    if (newUser.areaType !== 'Urban') return;
+    const sectorId = adminSelectedUrbanSector?._id ? String(adminSelectedUrbanSector._id) : '';
+    setAdminUrbanSectorId(sectorId);
+    setAdminSelectedSubsectorIds([]);
+    setAdminSubsectorDeptIdsBySubsectorId({});
+    if (!sectorId) {
+      setAdminSubsectors([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await dataService.saListSubsectors(sectorId);
+        if (cancelled) return;
+        setAdminSubsectors(Array.isArray(res?.subsectors) ? res.subsectors : []);
+      } catch {
+        if (cancelled) return;
+        setAdminSubsectors([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [newUser.areaType, adminSelectedUrbanSector, dataService]);
+
+  useEffect(() => {
+    const ids = Array.isArray(adminSelectedSubsectorIds) ? adminSelectedSubsectorIds : [];
+    if (ids.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const missing = ids.filter(id => !adminSubsectorDeptIdsBySubsectorId[String(id)]);
+      if (missing.length === 0) return;
+
+      try {
+        const results = await Promise.all(
+          missing.map(async (subsectorId) => {
+            try {
+              const res = await dataService.saGetSubsectorJurisdictions(subsectorId);
+              const depIds = Array.isArray(res?.mapping?.departmentIds) ? res.mapping.departmentIds : [];
+              return { subsectorId, depIds };
+            } catch {
+              return { subsectorId, depIds: [] };
+            }
+          })
+        );
+        if (cancelled) return;
+        setAdminSubsectorDeptIdsBySubsectorId(prev => {
+          const next = { ...(prev || {}) };
+          results.forEach(r => {
+            next[String(r.subsectorId)] = (r.depIds || []).map(x => String(x));
+          });
+          return next;
+        });
+      } catch {}
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [adminSelectedSubsectorIds, adminSubsectorDeptIdsBySubsectorId, dataService]);
+
   const eligibleAdminDepartments = React.useMemo(() => {
-    return (deps || []).filter(dep => {
+    const base = (deps || []).filter(dep => {
       if (!dep) return false;
       if (dep.areaTypes && dep.areaTypes.length > 0) {
         if (!dep.areaTypes.includes(newUser.areaType)) return false;
@@ -646,12 +871,116 @@ const SuperAdminDashboard = () => {
       }
       return true;
     });
-  }, [deps, newUser.areaType, newUser.sector, newUser.ruralJurisdiction]);
+    if (newUser.areaType !== 'Urban') return base;
+
+    const selected = Array.isArray(adminSelectedSubsectorIds) ? adminSelectedSubsectorIds.map(String) : [];
+    if (selected.length === 0) return base;
+
+    const lists = selected.map(id => adminSubsectorDeptIdsBySubsectorId[String(id)]).filter(Boolean);
+    if (lists.length !== selected.length) return base;
+    if (lists.some(arr => Array.isArray(arr) && arr.length === 0)) return base;
+
+    const allowed = lists.reduce((acc, arr) => {
+      const set = new Set((arr || []).map(String));
+      return acc.filter(x => set.has(x));
+    }, lists[0].map(String));
+    const allowedSet = new Set(allowed);
+    return base.filter(dep => allowedSet.has(String(dep?._id)));
+  }, [deps, newUser.areaType, newUser.sector, newUser.ruralJurisdiction, adminSelectedSubsectorIds, adminSubsectorDeptIdsBySubsectorId]);
 
   const selectedAdminDepartment = React.useMemo(() => {
     if (!newUser.departmentId) return null;
     return (deps || []).find(d => String(d._id) === String(newUser.departmentId)) || null;
   }, [deps, newUser.departmentId]);
+
+  const adminSelectedSubsectors = React.useMemo(() => {
+    const byId = new Map((adminSubsectors || []).map(s => [String(s?._id), s]));
+    return (adminSelectedSubsectorIds || []).map(id => byId.get(String(id))).filter(Boolean);
+  }, [adminSubsectors, adminSelectedSubsectorIds]);
+
+  const adminAssignmentStatus = React.useMemo(() => {
+    const areaType = String(newUser.areaType || 'Urban');
+    if (areaType === 'Urban') {
+      if (!String(newUser.sector || '').trim()) return { level: 'warn', label: t('incomplete') || 'Incomplete', message: t('selectSector') || 'Select Sector' };
+      if (Array.isArray(adminSubsectors) && adminSubsectors.length > 0 && adminSelectedSubsectors.length === 0) {
+        return { level: 'warn', label: t('incomplete') || 'Incomplete', message: t('selectSubsector') || 'Select Subsector' };
+      }
+      if (adminSelectedSubsectors.length > 0) {
+        const ids = adminSelectedSubsectors.map(s => String(s._id));
+        const lists = ids.map(id => adminSubsectorDeptIdsBySubsectorId[String(id)]).filter(Boolean);
+        if (lists.length !== ids.length) return { level: 'warn', label: t('loading') || 'Loading...', message: t('loading') || 'Loading...' };
+        if (lists.some(arr => Array.isArray(arr) && arr.length === 0)) return { level: 'warn', label: t('unmapped') || 'Unmapped', message: t('jurisdictionNotMapped') || 'Coverage mapping is missing for one or more subsectors' };
+      }
+    }
+    if (areaType === 'Rural') {
+      if (!String(newUser.ruralJurisdiction || '').trim()) return { level: 'warn', label: t('incomplete') || 'Incomplete', message: t('selectJurisdiction') || 'Select Jurisdiction' };
+    }
+    if (!newUser.departmentId) return { level: 'warn', label: t('incomplete') || 'Incomplete', message: t('selectDepartment') || 'Select Department' };
+    return { level: 'ok', label: t('ready') || 'Ready', message: t('assignmentReady') || 'Assignment ready' };
+  }, [newUser.areaType, newUser.sector, newUser.ruralJurisdiction, newUser.departmentId, adminSubsectors, adminSelectedSubsectors, adminSubsectorDeptIdsBySubsectorId, t]);
+
+  const adminStep1Ok = React.useMemo(() => {
+    return String(newUser.fullName || '').trim().length >= 2 && String(newUser.email || '').trim().length > 3;
+  }, [newUser.fullName, newUser.email]);
+
+  const adminStep2Ok = React.useMemo(() => {
+    return String(newUser.password || '').length >= 6 && String(adminConfirmPassword || '') === String(newUser.password || '');
+  }, [newUser.password, adminConfirmPassword]);
+
+  const adminStep3Ok = React.useMemo(() => {
+    const areaType = String(newUser.areaType || 'Urban');
+    if (areaType === 'Urban') {
+      if (!String(newUser.sector || '').trim()) return false;
+      if (Array.isArray(adminSubsectors) && adminSubsectors.length > 0 && adminSelectedSubsectors.length === 0) return false;
+    }
+    if (areaType === 'Rural') {
+      if (!String(newUser.ruralJurisdiction || '').trim()) return false;
+    }
+    if (!String(newUser.departmentId || '').trim()) return false;
+    return true;
+  }, [newUser.areaType, newUser.sector, newUser.ruralJurisdiction, newUser.departmentId, adminSubsectors, adminSelectedSubsectors]);
+
+  const adminCoveragePrereqOk = React.useMemo(() => {
+    const areaType = String(newUser.areaType || 'Urban');
+    if (areaType === 'Urban') {
+      if (!String(newUser.sector || '').trim()) return false;
+      if (Array.isArray(adminSubsectors) && adminSubsectors.length > 0 && adminSelectedSubsectors.length === 0) return false;
+      return true;
+    }
+    if (areaType === 'Rural') {
+      return !!String(newUser.ruralJurisdiction || '').trim();
+    }
+    return true;
+  }, [newUser.areaType, newUser.sector, newUser.ruralJurisdiction, adminSubsectors, adminSelectedSubsectors]);
+
+  const adminMaxStep = React.useMemo(() => {
+    if (!adminStep1Ok) return 1;
+    if (!adminStep2Ok) return 2;
+    if (!adminStep3Ok) return 3;
+    return 4;
+  }, [adminStep1Ok, adminStep2Ok, adminStep3Ok]);
+
+  const adminWorkersCount = React.useMemo(() => {
+    const depName = String(selectedAdminDepartment?.name || '').trim();
+    if (!depName) return null;
+    const officers = Array.isArray(users?.officers) ? users.officers : [];
+    return officers.filter(o => String(o?.department || '').trim() === depName).length;
+  }, [selectedAdminDepartment, users]);
+
+  const adminOpenComplaintsCount = React.useMemo(() => {
+    const depId = String(selectedAdminDepartment?._id || '');
+    const depName = String(selectedAdminDepartment?.name || '').trim();
+    if (!depId && !depName) return null;
+    const list = Array.isArray(complaints) ? complaints : [];
+    return list.filter(c => {
+      const s = String(c?.status || '').toLowerCase();
+      if (s !== 'pending' && s !== 'in-progress') return false;
+      const cid = String(c?.departmentId?._id || c?.departmentId || '');
+      if (depId && cid && cid === depId) return true;
+      if (depName && String(c?.department || '').trim() === depName) return true;
+      return false;
+    }).length;
+  }, [complaints, selectedAdminDepartment]);
 
   const reportRange = React.useMemo(() => {
     const from = reportFrom ? startOfDay(new Date(reportFrom)) : null;
@@ -873,11 +1202,6 @@ const SuperAdminDashboard = () => {
   }, [coverageNormalizationRan, deps, urbanSectorNames, refreshDeps, t]);
 
   useEffect(() => {
-    const j = buildJurisdictionText(newDep.areaTypes, newDep.sectors, newDep.ruralJurisdictions);
-    setNewDep(prev => (prev.jurisdiction === j ? prev : { ...prev, jurisdiction: j }));
-  }, [newDep.areaTypes, newDep.sectors, newDep.ruralJurisdictions]);
-
-  useEffect(() => {
     setNewDepLocationValidated(false);
     setNewDepLocationValidatedText('');
   }, [newDep.location, newDep.areaTypes, newDep.sectors, newDep.ruralJurisdictions]);
@@ -890,9 +1214,15 @@ const SuperAdminDashboard = () => {
 
   useEffect(() => {
     if (!editingDep) return;
+    const currentKey = makeDepValidationKey(editingDep);
+    if (editDepBaselineKey && currentKey === editDepBaselineKey) {
+      setEditDepLocationValidated(true);
+      setEditDepLocationValidatedText(String(editingDep.location || '').trim());
+      return;
+    }
     setEditDepLocationValidated(false);
     setEditDepLocationValidatedText('');
-  }, [editingDep?.location, editingDep?.areaTypes, editingDep?.sectors, editingDep?.ruralJurisdictions, editingDep]);
+  }, [editingDep?.location, editingDep?.areaTypes, editingDep?.sectors, editingDep?.ruralJurisdictions, editingDep, editDepBaselineKey, makeDepValidationKey]);
 
   useEffect(() => {
     if (activePage === 'overview') {
@@ -974,10 +1304,11 @@ const SuperAdminDashboard = () => {
         ...newDep,
         servicesOffered: newDep.servicesOffered.split(',').map(s => s.trim()).filter(Boolean),
         sectors: newDep.areaTypes.includes('Urban') ? newDep.sectors : [],
-        ruralJurisdictions: newDep.areaTypes.includes('Rural') ? newDep.ruralJurisdictions : []
+        ruralJurisdictions: newDep.areaTypes.includes('Rural') ? newDep.ruralJurisdictions : [],
+        addressValidated: true
       };
       await dataService.saCreateDepartment(payload);
-      setNewDep({ name: '', location: '', jurisdiction: '', servicesOffered: '', areaTypes: ['Urban'], sectors: [], ruralJurisdictions: [] });
+      setNewDep({ name: '', location: '', servicesOffered: '', areaTypes: ['Urban'], sectors: [], ruralJurisdictions: [] });
       setNewDepLocationValidated(false);
       setNewDepLocationValidatedText('');
       refreshDeps();
@@ -1138,13 +1469,18 @@ const SuperAdminDashboard = () => {
   };
 
   const startEditDepartment = (dep) => {
+    const normalized = normalizeCoverageNames(dep);
+    const baseline = makeDepValidationKey(normalized);
+    setEditDepBaselineKey(baseline);
     setEditingDep({
-      ...dep,
-      areaTypes: dep.areaTypes || [],
-      sectors: dep.sectors || [],
-      ruralJurisdictions: dep.ruralJurisdictions || [],
-      servicesOffered: (dep.servicesOffered || []).join(', ')
+      ...normalized,
+      areaTypes: normalized.areaTypes || [],
+      sectors: normalized.sectors || [],
+      ruralJurisdictions: normalized.ruralJurisdictions || [],
+      servicesOffered: (normalized.servicesOffered || []).join(', ')
     });
+    setEditDepLocationValidated(true);
+    setEditDepLocationValidatedText(String(dep?.location || '').trim());
     setEditModalOpen(true);
   };
 
@@ -1154,7 +1490,8 @@ const SuperAdminDashboard = () => {
       if (!isCoverageReady(editingDep)) {
         throw new Error('Select operational area type and coverage before setting address');
       }
-      if (!editDepLocationValidated) {
+      const requiresValidation = editDepBaselineKey ? makeDepValidationKey(editingDep) !== editDepBaselineKey : true;
+      if (requiresValidation && !editDepLocationValidated) {
         throw new Error(t('validateIslamabadAddressFirst') || 'Validate the Islamabad address before saving');
       }
       const payload = {
@@ -1162,15 +1499,21 @@ const SuperAdminDashboard = () => {
         location: editingDep.location,
         jurisdiction: editingDep.jurisdiction,
         areaTypes: editingDep.areaTypes,
-        sectors: editingDep.areaTypes.includes('Urban') ? editingDep.sectors : [],
-        ruralJurisdictions: editingDep.areaTypes.includes('Rural') ? editingDep.ruralJurisdictions : [],
-        servicesOffered: editingDep.servicesOffered.split(',').map(s => s.trim()).filter(Boolean)
+        sectors: editingDep.areaTypes.includes('Urban')
+          ? normalizeCoverageNames(editingDep).sectors
+          : [],
+        ruralJurisdictions: editingDep.areaTypes.includes('Rural')
+          ? normalizeCoverageNames(editingDep).ruralJurisdictions
+          : [],
+        servicesOffered: editingDep.servicesOffered.split(',').map(s => s.trim()).filter(Boolean),
+        addressValidated: requiresValidation ? !!editDepLocationValidated : true
       };
       await dataService.saUpdateDepartment(editingDep._id, payload);
       setEditModalOpen(false);
       setEditingDep(null);
       setEditDepLocationValidated(false);
       setEditDepLocationValidatedText('');
+      setEditDepBaselineKey('');
       refreshDeps();
       showModal(t('success') || 'Success', 'Department updated successfully');
     } catch (error) {
@@ -1184,12 +1527,31 @@ const SuperAdminDashboard = () => {
     setSaCreateStatus('');
     setCreating(true);
     try {
+      if (!String(newUser.email || '').trim()) {
+        throw new Error(t('emailRequired') || 'Email is required');
+      }
       const nameOk = /^[A-Za-z0-9\u00C0-\u024F\u1E00-\u1EFF\u0600-\u06FF\s'.-]+$/.test((newUser.fullName || '').trim());
       if (!nameOk) {
         throw new Error(t('invalidName') || 'Invalid name');
       }
       if (!newUser.password || newUser.password.length < 6) {
         throw new Error(t('passwordTooShort') || 'Password must be at least 6 characters');
+      }
+      if (String(adminConfirmPassword || '') !== String(newUser.password || '')) {
+        throw new Error(t('passwordsDoNotMatch') || 'Passwords do not match');
+      }
+      if (newUser.areaType === 'Urban') {
+        if (!String(newUser.sector || '').trim()) {
+          throw new Error(t('sectorRequired') || 'Sector is required');
+        }
+        if (Array.isArray(adminSubsectors) && adminSubsectors.length > 0 && (!Array.isArray(adminSelectedSubsectorIds) || adminSelectedSubsectorIds.length === 0)) {
+          throw new Error(t('subsectorRequired') || 'Select at least one subsector');
+        }
+      }
+      if (newUser.areaType === 'Rural') {
+        if (!String(newUser.ruralJurisdiction || '').trim()) {
+          throw new Error(t('jurisdictionRequired') || 'Rural jurisdiction is required');
+        }
       }
       if (!newUser.departmentId) {
         throw new Error(t('departmentRequired') || 'Department is required');
@@ -1205,7 +1567,22 @@ const SuperAdminDashboard = () => {
         ruralJurisdiction: newUser.ruralJurisdiction
       };
       await dataService.saCreateUser(payload);
-      setNewUser({ role: 'dept-admin', fullName: '', email: '', password: '', departmentId: '', areaType: 'Urban' });
+      setNewUser({
+        role: 'dept-admin',
+        fullName: '',
+        email: '',
+        password: '',
+        departmentId: '',
+        areaType: 'Urban',
+        sector: '',
+        ruralJurisdiction: ''
+      });
+      setAdminConfirmPassword('');
+      setAdminStep(1);
+      setAdminUrbanSectorId('');
+      setAdminSubsectors([]);
+      setAdminSelectedSubsectorIds([]);
+      setAdminSubsectorDeptIdsBySubsectorId({});
       setSaCreateStatus(t('deptAdminCreated') || 'Department Admin created successfully');
       loadUsers();
     } catch (err) {
@@ -1260,6 +1637,7 @@ const SuperAdminDashboard = () => {
   };
 
   const filteredDepartments = deps.filter(dep => {
+    if (dep?.isActive === false) return false;
     const q = (departmentSearch || '').toLowerCase().trim();
     if (!q) return true;
     return (
@@ -1269,6 +1647,35 @@ const SuperAdminDashboard = () => {
       (Array.isArray(dep.categories) && dep.categories.some(c => (c || '').toLowerCase().includes(q)))
     );
   });
+
+  const deleteDepartment = async (dep) => {
+    const name = String(dep?.name || '').trim() || (t('department') || 'Department');
+    const message = (t('confirmDeleteDepartment') || 'Are you sure you want to delete this department?') + `\n\n${name}`;
+    if (!window.confirm(message)) return;
+    try {
+      await dataService.saDeleteDepartment(dep._id);
+      await refreshDeps();
+      showModal(t('success') || 'Success', t('departmentDeletedSuccessfully') || 'Department deleted successfully');
+    } catch (error) {
+      const msg = String(error?.message || '');
+      const looksLikeMissingDeleteRoute =
+        msg.includes('404') ||
+        msg.toLowerCase().includes('not found') ||
+        msg.toLowerCase().includes('cannot delete');
+      if (looksLikeMissingDeleteRoute) {
+        try {
+          await dataService.saUpdateDepartment(dep._id, { isActive: false, addressValidated: true });
+          await refreshDeps();
+          showModal(t('success') || 'Success', t('departmentDeletedSuccessfully') || 'Department deleted successfully');
+          return;
+        } catch (fallbackErr) {
+          showModal(t('error') || 'Error', fallbackErr?.message || (t('failedToDeleteDepartment') || 'Failed to delete department'));
+          return;
+        }
+      }
+      showModal(t('error') || 'Error', msg || (t('failedToDeleteDepartment') || 'Failed to delete department'));
+    }
+  };
 
   const filteredRoutingPolicies = routingPolicies.filter(p => {
     const q = (routingSearch || '').toLowerCase().trim();
@@ -1478,8 +1885,8 @@ const SuperAdminDashboard = () => {
             <div className="section-header">
               <h3 className="form-title">{t('departments') || 'Departments'}</h3>
             </div>
-            <div className="sa-grid">
-              <div className="sa-panel premium">
+            <div className="sa-grid sa-departments-grid">
+              <div className="sa-panel premium sa-departments-form-panel">
                 <div className="panel-header">
                   <div className="sa-list-title"><i className="fas fa-building"></i>{t('createDepartment') || 'Create Department'}</div>
                 </div>
@@ -1611,26 +2018,16 @@ const SuperAdminDashboard = () => {
                         {newDepLocationValidating ? (t('validating') || 'Validating...') : (t('validate') || 'Validate')}
                       </button>
                       <div className={`sa-inline-status ${newDepLocationValidated ? 'ok' : ''}`}>
-                        {newDepLocationValidated ? (newDepLocationValidatedText || 'Validated') : (isCoverageReady(newDep) ? 'Not validated' : 'Select operational coverage first')}
+                        {newDepLocationValidated ? (newDepLocationValidatedText || 'Validated') : (isCoverageReady(newDep) ? 'Not validated' : '')}
                       </div>
                     </div>
-                  </div>
-                  <div className="form-field">
-                    <div className="form-label">{t('jurisdiction') || 'Jurisdiction (Auto)'}</div>
-                    <input
-                      className="sa-input"
-                      placeholder={t('jurisdiction') || 'Jurisdiction'}
-                      value={newDep.jurisdiction}
-                      readOnly
-                      disabled={!isCoverageReady(newDep)}
-                    />
                   </div>
                   <button className="btn btn-primary" type="submit" disabled={!isCoverageReady(newDep) || !newDepLocationValidated}>
                     {t('addDepartment')}
                   </button>
                 </form>
               </div>
-              <div className="sa-panel premium">
+              <div className="sa-panel premium sa-departments-list-panel">
                 <div className="panel-header">
                   <div className="sa-list-title"><i className="fas fa-building"></i>{t('departments') || 'Departments'}</div>
                   <div className="panel-actions">
@@ -1651,12 +2048,23 @@ const SuperAdminDashboard = () => {
                         <div className="sa-dep-title">
                           <strong>{dep.name}</strong>
                           <div className="sa-dep-tags">
-                            {(dep.areaTypes || []).map(type => <span key={`${dep._id}-${type}`} className="sa-tag">{type}</span>)}
+                            {(dep.areaTypes || []).map(type => (
+                              <span key={`${dep._id}-${type}`} className="sa-tag">
+                                {t(String(type || '').toLowerCase()) || type}
+                              </span>
+                            ))}
                             {(dep.areaTypes || []).includes('Urban') && <span className="sa-tag subtle">{t('sectors') || 'Sectors'}: {(dep.sectors || []).length}</span>}
                             {(dep.areaTypes || []).includes('Rural') && <span className="sa-tag subtle">{t('ruralJurisdictions') || 'Rural Jurisdictions'}: {(dep.ruralJurisdictions || []).length}</span>}
                           </div>
                         </div>
-                        <button className="btn btn-outline btn-sm" onClick={() => startEditDepartment(dep)}>{t('edit') || 'Edit'}</button>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button className="btn btn-outline btn-sm" type="button" onClick={() => startEditDepartment(dep)}>
+                            {t('edit') || 'Edit'}
+                          </button>
+                          <button className="btn btn-outline btn-sm" type="button" onClick={() => deleteDepartment(dep)}>
+                            {t('delete') || 'Delete'}
+                          </button>
+                        </div>
                       </div>
                       <div className="sa-item-details sa-dep-details">
                         <div className="sa-meta-row">
@@ -1665,7 +2073,7 @@ const SuperAdminDashboard = () => {
                         </div>
                         <div className="sa-meta-row">
                           <div className="sa-meta-k">{t('jurisdiction') || 'Jurisdiction'}</div>
-                          <div className="sa-meta-v">{dep.jurisdiction || '—'}</div>
+                          <div className="sa-meta-v">{buildJurisdictionDisplayText(dep) || '—'}</div>
                         </div>
                         <div className="sa-meta-row">
                           <div className="sa-meta-k">{t('services') || 'Services'}</div>
@@ -1890,7 +2298,7 @@ const SuperAdminDashboard = () => {
         {activePage === 'routing' && (
           <section className="sa-section routing-page">
             <div className="section-header">
-              <h3 className="form-title">{t('routingPolicies') || 'Routing Policies'}</h3>
+              <h3 className="form-title">{t('routing') || 'Smart Routing'}</h3>
             </div>
             <div className="sa-grid">
               <div className="sa-panel premium">
@@ -2275,10 +2683,10 @@ const SuperAdminDashboard = () => {
                     </div>
                     <div className="sa-item-details">
                       {(routingDiagnostics?.urbanOverlaps || []).slice(0, 3).map(x => (
-                        <div key={`uo-${x.name}`}>Urban {x.name}: {x.departments.join(', ')}</div>
+                        <div key={`uo-${x.name}`}>{t('urban') || 'Urban'} {x.name}: {x.departments.join(', ')}</div>
                       ))}
                       {(routingDiagnostics?.ruralOverlaps || []).slice(0, 3).map(x => (
-                        <div key={`ro-${x.name}`}>Rural {x.name}: {x.departments.join(', ')}</div>
+                        <div key={`ro-${x.name}`}>{t('rural') || 'Rural'} {x.name}: {x.departments.join(', ')}</div>
                       ))}
                       {((routingDiagnostics?.urbanOverlaps || []).length + (routingDiagnostics?.ruralOverlaps || []).length) === 0 && (
                         <div>{t('noIssues') || 'No issues found'}</div>
@@ -2303,23 +2711,36 @@ const SuperAdminDashboard = () => {
                   )}
                   {filteredRoutingPolicies.map(p => {
                     const area = String(p?.match?.areaType || 'Any');
-                    const areaLabel = area === 'Urban'
-                      ? (p?.match?.sector ? `Urban: ${p.match.sector}` : 'Urban: All')
+                    const areaPrefix = area === 'Urban'
+                      ? (t('urban') || 'Urban')
                       : area === 'Rural'
-                          ? (p?.match?.ruralJurisdiction ? `Rural: ${p.match.ruralJurisdiction}` : 'Rural: All')
-                          : 'Any';
+                        ? (t('rural') || 'Rural')
+                        : (t('any') || 'Any');
+                    const allLabel = t('all') || 'All';
+                    const areaLabel = area === 'Urban'
+                      ? (p?.match?.sector ? `${areaPrefix}: ${p.match.sector}` : `${areaPrefix}: ${allLabel}`)
+                      : area === 'Rural'
+                          ? (p?.match?.ruralJurisdiction ? `${areaPrefix}: ${p.match.ruralJurisdiction}` : `${areaPrefix}: ${allLabel}`)
+                          : areaPrefix;
                     const actionType = String(p?.action?.type || 'route');
+                    const actionTypeLabel = actionType === 'route'
+                      ? (t('route') || 'Route to Department')
+                      : actionType === 'require-approval'
+                        ? (t('requireApproval') || 'Require Approval')
+                        : actionType === 'flag-for-review'
+                          ? (t('flagForReview') || 'Flag for Review')
+                          : actionType;
                     const depName = p?.action?.departmentId?.name || p?.action?.departmentId || '';
                     return (
                       <div key={p._id} className="sa-list-item">
                         <div className="sa-item-header">
                           <div className="sa-item-title">
-                            {p.name || 'Policy'} • {p.match?.categoryName || p.match?.categoryKey || ''} • {areaLabel}
+                            {p.name || (t('policy') || 'Policy')} • {p.match?.categoryName || p.match?.categoryKey || ''} • {areaLabel}
                           </div>
                           <div>#{p.priority}</div>
                         </div>
                         <div className="sa-item-details">
-                          <div><strong>{t('action') || 'Action'}:</strong> {actionType}{(actionType === 'route' && depName) ? ` → ${depName}` : ''}</div>
+                          <div><strong>{t('action') || 'Action'}:</strong> {actionTypeLabel}{(actionType === 'route' && depName) ? ` → ${depName}` : ''}</div>
                           {(p?.conditions?.allowedPriorities || []).length > 0 && <div><strong>{t('complaintPriority') || 'Complaint Priority'}:</strong> {p.conditions.allowedPriorities.join(', ')}</div>}
                           {(p?.conditions?.keywords || []).length > 0 && <div><strong>{t('keywords') || 'Keywords'}:</strong> {p.conditions.keywords.join(', ')}</div>}
                           {typeof p?.conditions?.maxOpenComplaints === 'number' && <div><strong>{t('backlogThreshold') || 'Backlog Threshold'}:</strong> {p.conditions.maxOpenComplaints}</div>}
@@ -2411,7 +2832,7 @@ const SuperAdminDashboard = () => {
                   <div className="panel-header">
                     <div className="sa-list-title">
                       <i className="fas fa-stopwatch"></i>
-                      {t('slaPolicies') || 'Service Level Targets'}
+                      {t('slaPolicies') || 'SLA Policies'}
                     </div>
                   </div>
                   <p className="sa-subtitle">
@@ -2514,7 +2935,7 @@ const SuperAdminDashboard = () => {
                     </div>
                   </div>
                   <p className="sa-subtitle">
-                    Configure how much GPS error is tolerated when citizens pin a location.
+                    {t('geoPoliciesHelp') || 'Configure how much GPS error is tolerated when citizens pin a location.'}
                   </p>
                   <div className="sa-form">
                     <div className="form-field">
@@ -2552,119 +2973,386 @@ const SuperAdminDashboard = () => {
             <div className="section-header">
               <h3 className="form-title">{t('adminRegistration') || 'Admin Registration'}</h3>
             </div>
-            <div className="sa-grid sa-admin-layout">
-              <div className="sa-panel premium sa-admin-form-panel">
+            <div className="sa-grid sa-admin-registration-grid">
+              <div className="sa-panel premium sa-admin-workflow-panel">
                 <div className="panel-header">
-                  <div className="sa-list-title"><i className="fas fa-user-shield"></i>{t('registerDeptAdmin') || 'Register Department Admin'}</div>
+                  <div className="sa-list-title">
+                    <i className="fas fa-user-shield"></i>
+                    {t('registerDeptAdmin') || 'Register Department Admin'}
+                  </div>
+                  <div className="sa-admin-step-indicator">
+                    {t('step') || 'Step'} {adminStep}/4
+                  </div>
                 </div>
-                <form className="sa-form sa-form-grid" onSubmit={createUser}>
-                  <div className="form-field">
-                    <div className="form-label">{t('fullName')}</div>
-                    <input className="sa-input" placeholder={t('fullName')} value={newUser.fullName} onChange={e => setNewUser({ ...newUser, fullName: e.target.value })} required />
-                  </div>
-                  <div className="form-field">
-                    <div className="form-label">{t('email')}</div>
-                    <input className="sa-input" placeholder={t('email')} type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} required />
-                  </div>
 
-                  <div className="form-field span-2">
-                    <div className="form-label">{t('passwordPlaceholder') || 'Password'}</div>
-                    <input className="sa-input" placeholder={t('passwordPlaceholder') || 'Password'} type="password" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} required />
-                  </div>
+                <div className="sa-admin-stepper" role="tablist" aria-label={t('workflow') || 'Workflow'}>
+                  {[
+                    { id: 1, label: t('personalInfo') || 'Personal Information', ok: adminStep1Ok },
+                    { id: 2, label: t('accountSetup') || 'Account Setup', ok: adminStep2Ok },
+                    { id: 3, label: t('adminAssignment') || 'Administrative Assignment', ok: adminStep3Ok },
+                    { id: 4, label: t('reviewRegister') || 'Review & Register', ok: adminStep3Ok }
+                  ].map(s => {
+                    const reachable = s.id <= adminMaxStep;
+                    const active = s.id === adminStep;
+                    const completed = s.id < adminStep && (s.id === 1 ? adminStep1Ok : s.id === 2 ? adminStep2Ok : adminStep3Ok);
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className={`sa-admin-step ${active ? 'active' : ''} ${completed ? 'done' : ''}`}
+                        onClick={() => {
+                          if (!reachable) return;
+                          setAdminStep(s.id);
+                        }}
+                        disabled={!reachable}
+                      >
+                        <span className="sa-admin-step-dot">{completed ? '✓' : s.id}</span>
+                        <span className="sa-admin-step-label">{s.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
 
-                  <div className="form-field">
-                    <div className="form-label">{t('areaType') || 'Area Type'}</div>
-                    <select className="sa-select" value={newUser.areaType || 'Urban'} onChange={e => setNewUser({ ...newUser, areaType: e.target.value, sector: '', ruralJurisdiction: '', departmentId: '' })}>
-                      <option value="Urban">{t('urban') || 'Urban'}</option>
-                      <option value="Rural">{t('rural') || 'Rural'}</option>
-                    </select>
-                  </div>
-
-                  {newUser.areaType === 'Urban' && (
-                    <div className="form-field">
-                      <div className="form-label">{t('sector') || 'Sector'}</div>
-                      <input
-                        className="sa-input"
-                        list="sa-admin-sector-list"
-                        placeholder={t('searchSector') || 'Search Sector'}
-                        value={newUser.sector || ''}
-                        onChange={e => setNewUser({ ...newUser, sector: e.target.value, departmentId: '' })}
-                      />
-                      <datalist id="sa-admin-sector-list">
-                        {(urbanSectorNames || [])
-                          .slice()
-                          .sort((a, b) => String(a).localeCompare(String(b)))
-                          .map(name => <option key={name} value={name} />)}
-                      </datalist>
+                <form
+                  className="sa-form"
+                  onSubmit={(e) => {
+                    if (adminStep < 4) {
+                      e.preventDefault();
+                      const next = Math.min(4, adminStep + 1);
+                      if (next <= adminMaxStep) setAdminStep(next);
+                      return;
+                    }
+                    createUser(e);
+                  }}
+                >
+                  {adminStep === 1 && (
+                    <div className="sa-admin-section">
+                      <div className="sa-admin-section-title">
+                        <i className="fas fa-id-card"></i>
+                        {t('personalInfo') || 'Personal Information'}
+                      </div>
+                      <div className="sa-admin-section-help">
+                        {t('personalInfoHelp') || 'Enter the admin’s identity details. These will be used for audit logs and notifications.'}
+                      </div>
+                      <div className="sa-form sa-form-grid">
+                        <div className="form-field">
+                          <div className="form-label">{t('fullName')}</div>
+                          <input
+                            className="sa-input"
+                            placeholder={t('fullName')}
+                            value={newUser.fullName}
+                            onChange={e => setNewUser({ ...newUser, fullName: e.target.value })}
+                            required
+                          />
+                        </div>
+                        <div className="form-field">
+                          <div className="form-label">{t('email')}</div>
+                          <input
+                            className="sa-input"
+                            placeholder={t('email')}
+                            type="email"
+                            value={newUser.email}
+                            onChange={e => setNewUser({ ...newUser, email: e.target.value })}
+                            required
+                          />
+                        </div>
+                      </div>
                     </div>
                   )}
 
-                  {newUser.areaType === 'Rural' && (
-                    <div className="form-field">
-                      <div className="form-label">{t('ruralJurisdiction') || 'Rural Jurisdiction'}</div>
-                      <input
-                        className="sa-input"
-                        list="sa-admin-jurisdiction-list"
-                        placeholder={t('searchJurisdiction') || 'Search Jurisdiction'}
-                        value={newUser.ruralJurisdiction || ''}
-                        onChange={e => setNewUser({ ...newUser, ruralJurisdiction: e.target.value, departmentId: '' })}
-                      />
-                      <datalist id="sa-admin-jurisdiction-list">
-                        {(ruralJurisdictions || [])
-                          .map(j => j?.name)
-                          .filter(Boolean)
-                          .slice()
-                          .sort((a, b) => String(a).localeCompare(String(b)))
-                          .map(name => <option key={name} value={name} />)}
-                      </datalist>
+                  {adminStep === 2 && (
+                    <div className="sa-admin-section">
+                      <div className="sa-admin-section-title">
+                        <i className="fas fa-key"></i>
+                        {t('accountSetup') || 'Account Setup'}
+                      </div>
+                      <div className="sa-admin-section-help">
+                        {t('accountSetupHelp') || 'Set a secure password. The admin can be forced to change it later from User Management.'}
+                      </div>
+                      <div className="sa-form sa-form-grid">
+                        <div className="form-field">
+                          <div className="form-label">{t('passwordPlaceholder') || 'Password'}</div>
+                          <input
+                            className="sa-input"
+                            placeholder={t('passwordPlaceholder') || 'Password'}
+                            type="password"
+                            value={newUser.password}
+                            onChange={e => setNewUser({ ...newUser, password: e.target.value })}
+                            required
+                          />
+                          <div className="form-helper">{t('min6Chars') || 'Minimum 6 characters'}</div>
+                        </div>
+                        <div className="form-field">
+                          <div className="form-label">{t('confirmPassword') || 'Confirm Password'}</div>
+                          <input
+                            className="sa-input"
+                            placeholder={t('confirmPassword') || 'Confirm Password'}
+                            type="password"
+                            value={adminConfirmPassword}
+                            onChange={e => setAdminConfirmPassword(e.target.value)}
+                            required
+                          />
+                          {adminConfirmPassword && String(adminConfirmPassword) !== String(newUser.password || '') && (
+                            <div className="form-helper danger">{t('passwordsDoNotMatch') || 'Passwords do not match'}</div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   )}
 
-                  <div className="form-field span-2">
-                    <div className="form-label">{t('department') || 'Department'}</div>
-                    <select className="sa-select" value={newUser.departmentId || ''} onChange={e => setNewUser({ ...newUser, departmentId: e.target.value })}>
-                      <option value="">{t('selectDepartment') || 'Select Department'}</option>
-                      {eligibleAdminDepartments.map(dep => (
-                        <option key={dep._id} value={dep._id}>{dep.name}</option>
-                      ))}
-                    </select>
-                    <div className="form-helper">{(t('available') || 'Available')}: {eligibleAdminDepartments.length}</div>
-                  </div>
+                  {adminStep === 3 && (
+                    <div className="sa-admin-section">
+                      <div className="sa-admin-section-title">
+                        <i className="fas fa-sitemap"></i>
+                        {t('adminAssignment') || 'Administrative Assignment'}
+                      </div>
+                      <div className="sa-admin-section-help">
+                        {t('adminAssignmentHelp') || 'Select operational coverage to filter available departments and avoid duplicate admins for the same jurisdiction.'}
+                      </div>
 
-                  <div className="form-field span-2">
-                    <button className="btn btn-primary" type="submit" disabled={creating}>
-                      {creating ? (t('loading') || 'Loading...') : (t('registerDeptAdmin') || 'Register Department Admin')}
+                      <div className="sa-form sa-form-grid">
+                        <div className="form-field span-2">
+                          <div className="form-label">{t('areaType') || 'Area Type'}</div>
+                          <div className="segmented">
+                            <button
+                              type="button"
+                              className={`seg-item ${String(newUser.areaType || 'Urban') === 'Urban' ? 'active' : ''}`}
+                              onClick={() => setNewUser(prev => ({ ...prev, areaType: 'Urban', sector: '', ruralJurisdiction: '', departmentId: '' }))}
+                            >
+                              {t('urban') || 'Urban'}
+                            </button>
+                            <button
+                              type="button"
+                              className={`seg-item ${String(newUser.areaType || 'Urban') === 'Rural' ? 'active' : ''}`}
+                              onClick={() => setNewUser(prev => ({ ...prev, areaType: 'Rural', sector: '', ruralJurisdiction: '', departmentId: '' }))}
+                            >
+                              {t('rural') || 'Rural'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {newUser.areaType === 'Urban' && (
+                          <>
+                            <div className="form-field">
+                              <div className="form-label">{t('sector') || 'Sector'}</div>
+                              <input
+                                className="sa-input"
+                                list="sa-admin-sector-list"
+                                placeholder={t('searchSector') || 'Search Sector'}
+                                value={newUser.sector || ''}
+                                onChange={e => setNewUser({ ...newUser, sector: e.target.value, departmentId: '' })}
+                              />
+                              <datalist id="sa-admin-sector-list">
+                                {(urbanSectorNames || [])
+                                  .slice()
+                                  .sort((a, b) => String(a).localeCompare(String(b)))
+                                  .map(name => <option key={name} value={name} />)}
+                              </datalist>
+                              <div className="form-helper">{t('sectorHelper') || 'Required to load subsectors and filter departments.'}</div>
+                            </div>
+                            <div className="form-field">
+                              <div className="form-label">{t('subsectors') || 'Subsectors'}</div>
+                              <select
+                                className="sa-select sa-multi-select"
+                                multiple
+                                disabled={!adminUrbanSectorId}
+                                value={adminSelectedSubsectorIds}
+                                onChange={(e) => {
+                                  const values = Array.from(e.target.selectedOptions).map(o => o.value);
+                                  setAdminSelectedSubsectorIds(values);
+                                  setNewUser(prev => ({ ...prev, departmentId: '' }));
+                                }}
+                              >
+                                {(adminSubsectors || []).map(s => (
+                                  <option key={s._id} value={String(s._id)}>{s.name}</option>
+                                ))}
+                              </select>
+                              <div className="form-helper">{t('multiSelectHelper') || 'Hold Ctrl/Cmd to select multiple'}</div>
+                            </div>
+                          </>
+                        )}
+
+                        {newUser.areaType === 'Rural' && (
+                          <div className="form-field span-2">
+                            <div className="form-label">{t('ruralJurisdiction') || 'Rural Jurisdiction'}</div>
+                            <input
+                              className="sa-input"
+                              list="sa-admin-jurisdiction-list"
+                              placeholder={t('searchJurisdiction') || 'Search Jurisdiction'}
+                              value={newUser.ruralJurisdiction || ''}
+                              onChange={e => setNewUser({ ...newUser, ruralJurisdiction: e.target.value, departmentId: '' })}
+                            />
+                            <datalist id="sa-admin-jurisdiction-list">
+                              {(ruralJurisdictions || [])
+                                .map(j => j?.name)
+                                .filter(Boolean)
+                                .slice()
+                                .sort((a, b) => String(a).localeCompare(String(b)))
+                                .map(name => <option key={name} value={name} />)}
+                            </datalist>
+                            <div className="form-helper">{t('jurisdictionHelper') || 'Required to filter departments and prevent duplicate coverage admins.'}</div>
+                          </div>
+                        )}
+
+                        <div className="form-field span-2">
+                          <div className="form-label">{t('department') || 'Department'}</div>
+                          <select
+                            className="sa-select"
+                            value={newUser.departmentId || ''}
+                            disabled={!adminCoveragePrereqOk || eligibleAdminDepartments.length === 0}
+                            onChange={e => setNewUser({ ...newUser, departmentId: e.target.value })}
+                          >
+                            <option value="">{t('selectDepartment') || 'Select Department'}</option>
+                            {eligibleAdminDepartments.map(dep => (
+                              <option key={dep._id} value={dep._id}>{dep.name}</option>
+                            ))}
+                          </select>
+                          <div className="form-helper">
+                            {(t('available') || 'Available')}: {eligibleAdminDepartments.length}
+                            {adminAssignmentStatus?.message ? ` • ${adminAssignmentStatus.message}` : ''}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {adminStep === 4 && (
+                    <div className="sa-admin-section">
+                      <div className="sa-admin-section-title">
+                        <i className="fas fa-clipboard-check"></i>
+                        {t('reviewRegister') || 'Review & Register'}
+                      </div>
+                      <div className="sa-admin-section-help">
+                        {t('reviewHelp') || 'Review the assignment summary before creating the admin account.'}
+                      </div>
+                      <div className="sa-admin-review">
+                        <div className={`sa-admin-status ${adminAssignmentStatus.level}`}>
+                          <div className="sa-admin-status-title">{adminAssignmentStatus.label}</div>
+                          <div className="sa-admin-status-sub">{adminAssignmentStatus.message}</div>
+                        </div>
+                        <div className="sa-kv">
+                          <div className="sa-kv-row">
+                            <div className="sa-kv-k">{t('fullName')}</div>
+                            <div className="sa-kv-v">{newUser.fullName || '—'}</div>
+                          </div>
+                          <div className="sa-kv-row">
+                            <div className="sa-kv-k">{t('email')}</div>
+                            <div className="sa-kv-v">{newUser.email || '—'}</div>
+                          </div>
+                          <div className="sa-kv-row">
+                            <div className="sa-kv-k">{t('areaType') || 'Area Type'}</div>
+                            <div className="sa-kv-v">{t(String(newUser.areaType || 'Urban').toLowerCase()) || newUser.areaType}</div>
+                          </div>
+                          <div className="sa-kv-row">
+                            <div className="sa-kv-k">{newUser.areaType === 'Rural' ? (t('ruralJurisdiction') || 'Rural Jurisdiction') : (t('sector') || 'Sector')}</div>
+                            <div className="sa-kv-v">{(newUser.areaType === 'Rural' ? newUser.ruralJurisdiction : newUser.sector) || '—'}</div>
+                          </div>
+                          {newUser.areaType === 'Urban' && (
+                            <div className="sa-kv-row">
+                              <div className="sa-kv-k">{t('subsectors') || 'Subsectors'}</div>
+                              <div className="sa-kv-v">{adminSelectedSubsectors.length ? adminSelectedSubsectors.map(s => s.name).join(', ') : '—'}</div>
+                            </div>
+                          )}
+                          <div className="sa-kv-row">
+                            <div className="sa-kv-k">{t('department') || 'Department'}</div>
+                            <div className="sa-kv-v">{selectedAdminDepartment?.name || '—'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="sa-admin-actions">
+                    <button
+                      className="btn btn-outline"
+                      type="button"
+                      onClick={() => setAdminStep(s => Math.max(1, s - 1))}
+                      disabled={adminStep === 1 || creating}
+                    >
+                      {t('back') || 'Back'}
                     </button>
+                    {adminStep < 4 ? (
+                      <button
+                        className="btn btn-primary"
+                        type="submit"
+                        disabled={creating || (adminStep === 1 ? !adminStep1Ok : adminStep === 2 ? !adminStep2Ok : !adminStep3Ok)}
+                      >
+                        {t('next') || 'Next'}
+                      </button>
+                    ) : (
+                      <button className="btn btn-primary" type="submit" disabled={creating || !adminStep3Ok}>
+                        {creating ? (t('creating') || 'Creating...') : (t('registerDeptAdmin') || 'Register Department Admin')}
+                      </button>
+                    )}
                   </div>
                 </form>
+
                 {saCreateError && <div className="sa-status danger">{saCreateError}</div>}
                 {saCreateStatus && <div className="sa-status success">{saCreateStatus}</div>}
               </div>
 
-              <div className="sa-panel premium sa-admin-preview-panel">
+              <div className="sa-panel premium sa-admin-summary-panel">
                 <div className="panel-header">
-                  <div className="sa-list-title"><i className="fas fa-clipboard-list"></i>{t('details') || 'Details'}</div>
+                  <div className="sa-list-title">
+                    <i className="fas fa-clipboard-list"></i>
+                    {t('assignmentSummary') || 'Assignment Summary'}
+                  </div>
+                  <div className={`sa-admin-summary-pill ${adminAssignmentStatus.level}`}>
+                    {adminAssignmentStatus.label}
+                  </div>
                 </div>
-                <div className="sa-kv">
-                  <div className="sa-kv-row">
-                    <div className="sa-kv-k">{t('areaType') || 'Area Type'}</div>
-                    <div className="sa-kv-v">{newUser.areaType || '-'}</div>
+
+                <div className="sa-admin-summary-body">
+                  <div className="sa-admin-badges">
+                    <span className="sa-tag">{t(String(newUser.areaType || 'Urban').toLowerCase()) || newUser.areaType}</span>
+                    {newUser.areaType === 'Urban' && <span className="sa-tag subtle">{t('sector') || 'Sector'}: {newUser.sector || '—'}</span>}
+                    {newUser.areaType === 'Rural' && <span className="sa-tag subtle">{t('ruralJurisdiction') || 'Rural Jurisdiction'}: {newUser.ruralJurisdiction || '—'}</span>}
+                    {selectedAdminDepartment?.name && <span className="sa-tag">{selectedAdminDepartment.name}</span>}
                   </div>
-                  <div className="sa-kv-row">
-                    <div className="sa-kv-k">{newUser.areaType === 'Rural' ? (t('ruralJurisdiction') || 'Rural Jurisdiction') : (t('sector') || 'Sector')}</div>
-                    <div className="sa-kv-v">{(newUser.areaType === 'Rural' ? newUser.ruralJurisdiction : newUser.sector) || (t('any') || 'Any')}</div>
-                  </div>
-                  <div className="sa-kv-row">
-                    <div className="sa-kv-k">{t('departments') || 'Departments'}</div>
-                    <div className="sa-kv-v">{eligibleAdminDepartments.length}</div>
-                  </div>
-                  <div className="sa-kv-row">
-                    <div className="sa-kv-k">{t('selectedDepartment') || 'Selected Department'}</div>
-                    <div className="sa-kv-v">{selectedAdminDepartment?.name || '—'}</div>
-                  </div>
-                  <div className="sa-kv-row">
-                    <div className="sa-kv-k">{t('location') || 'Location'}</div>
-                    <div className="sa-kv-v">{selectedAdminDepartment?.location || '—'}</div>
+
+                  {newUser.areaType === 'Urban' && adminSelectedSubsectors.length > 0 && (
+                    <div className="sa-admin-chip-group">
+                      <div className="sa-admin-chip-title">{t('subsectors') || 'Subsectors'}</div>
+                      <div className="sa-admin-chips">
+                        {adminSelectedSubsectors.slice(0, 8).map(s => (
+                          <span key={s._id} className="sa-chip">{s.name}</span>
+                        ))}
+                        {adminSelectedSubsectors.length > 8 && (
+                          <span className="sa-chip subtle">+{adminSelectedSubsectors.length - 8}</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="sa-kv">
+                    <div className="sa-kv-row">
+                      <div className="sa-kv-k">{t('coverageCount') || 'Coverage Count'}</div>
+                      <div className="sa-kv-v">
+                        {newUser.areaType === 'Urban'
+                          ? (adminSelectedSubsectors.length ? adminSelectedSubsectors.length : (adminSubsectors.length ? '—' : 0))
+                          : (newUser.ruralJurisdiction ? 1 : '—')}
+                      </div>
+                    </div>
+                    <div className="sa-kv-row">
+                      <div className="sa-kv-k">{t('eligibleDepartments') || 'Eligible Departments'}</div>
+                      <div className="sa-kv-v">{eligibleAdminDepartments.length}</div>
+                    </div>
+                    <div className="sa-kv-row">
+                      <div className="sa-kv-k">{t('jurisdictionStatus') || 'Jurisdiction Status'}</div>
+                      <div className="sa-kv-v">{adminAssignmentStatus.level === 'danger' ? (t('unmapped') || 'Unmapped') : (t('mapped') || 'Mapped')}</div>
+                    </div>
+                    <div className="sa-kv-row">
+                      <div className="sa-kv-k">{t('workersUnderAdmin') || 'Workers Under This Admin'}</div>
+                      <div className="sa-kv-v">{adminWorkersCount == null ? '—' : adminWorkersCount}</div>
+                    </div>
+                    <div className="sa-kv-row">
+                      <div className="sa-kv-k">{t('assignedComplaints') || 'Assigned Complaints (Open)'}</div>
+                      <div className="sa-kv-v">{adminOpenComplaintsCount == null ? '—' : adminOpenComplaintsCount}</div>
+                    </div>
+                    <div className="sa-kv-row">
+                      <div className="sa-kv-k">{t('location') || 'Location'}</div>
+                      <div className="sa-kv-v">{selectedAdminDepartment?.location || '—'}</div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2678,7 +3366,6 @@ const SuperAdminDashboard = () => {
               <h3 className="form-title">{t('complaints') || 'Complaints'}</h3>
               <div className="sa-complaints-actions">
                 <div className="input-with-icon inline-search">
-                  <i className="fas fa-search input-icon"></i>
                   <input className="sa-input" placeholder={t('search') || 'Search'} value={complaintSearch} onChange={e => setComplaintSearch(e.target.value)} />
                 </div>
                 <button
@@ -2710,7 +3397,6 @@ const SuperAdminDashboard = () => {
                   {complaintsFilterMode === 'urban' && (
                     <div className="sa-filter-inline">
                       <div className="input-with-icon">
-                        <i className="fas fa-search input-icon"></i>
                         <input
                           className="sa-input sa-input-sm"
                           list="sa-complaints-sector-list"
@@ -2730,7 +3416,6 @@ const SuperAdminDashboard = () => {
                   {complaintsFilterMode === 'rural' && (
                     <div className="sa-filter-inline">
                       <div className="input-with-icon">
-                        <i className="fas fa-search input-icon"></i>
                         <input
                           className="sa-input sa-input-sm"
                           list="sa-complaints-jurisdiction-list"
@@ -2831,8 +3516,7 @@ const SuperAdminDashboard = () => {
                         ? (t('ruralJurisdictions') || 'Rural Jurisdictions')
                         : (t('departments') || 'Departments')}
                   </div>
-                  <div className="input-with-icon sa-group-search">
-                    <i className="fas fa-search input-icon"></i>
+                  <div className="sa-group-search">
                     <input
                       className="sa-input sa-input-sm"
                       placeholder={
@@ -3172,60 +3856,120 @@ const SuperAdminDashboard = () => {
 
         {activePage === 'users' && (
           <section className="sa-section">
-            <h3 className="form-title">{t('users')}</h3>
-            <div className="sa-grid">
-              <div className="sa-panel">
-                <h4 className="section-subtitle">{t('departmentAdmins')}</h4>
-                <ul className="sa-list">
-                  {users.admins.map(u => (
-                    <li key={u._id} className="sa-list-item">
-                      <div className="sa-item-header">
-                        <div className="sa-item-title">{u.fullName} ({u.email}) [{u.department}]</div>
-                        <span className={`status-badge ${u.isBlocked ? 'status-pending' : 'status-resolved'}`}>{u.isBlocked ? 'BLOCKED' : 'ACTIVE'}</span>
+            {(() => {
+              const cards = [
+                {
+                  key: 'dept-admin',
+                  icon: 'fa-user-shield',
+                  title: t('departmentAdmins') || 'Department Admins',
+                  count: Array.isArray(users.admins) ? users.admins.length : 0
+                },
+                {
+                  key: 'field-officer',
+                  icon: 'fa-user-cog',
+                  title: t('fieldOfficers') || 'Field Officers',
+                  count: Array.isArray(users.officers) ? users.officers.length : 0
+                },
+                {
+                  key: 'citizen',
+                  icon: 'fa-users',
+                  title: t('citizens') || 'Citizens',
+                  count: Array.isArray(users.citizens) ? users.citizens.length : 0
+                }
+              ];
+
+              const activeKey = String(userMgmtRole || '').trim();
+              const activeCard = cards.find(c => c.key === activeKey) || null;
+              const activeList =
+                activeKey === 'dept-admin'
+                  ? (users.admins || [])
+                  : activeKey === 'field-officer'
+                    ? (users.officers || [])
+                    : activeKey === 'citizen'
+                      ? (users.citizens || [])
+                      : [];
+
+              const renderUserTitle = (u) => {
+                const name = String(u?.fullName || '').trim();
+                const email = String(u?.email || '').trim();
+                const dept = String(u?.department || '').trim();
+                const base = [name, email ? `(${email})` : ''].filter(Boolean).join(' ');
+                if (activeKey === 'citizen') return base;
+                return [base, dept ? `[${dept}]` : ''].filter(Boolean).join(' ');
+              };
+
+              return (
+                <>
+                  <div className="sa-users-header">
+                    <h3 className="form-title">{t('users') || 'Users'}</h3>
+                    {activeCard && (
+                      <button type="button" className="btn btn-outline sa-users-back" onClick={() => setUserMgmtRole('')}>
+                        {t('back') || 'Back'}
+                      </button>
+                    )}
+                  </div>
+
+                  {!activeCard ? (
+                    <div className="sa-user-type-grid">
+                      {cards.map(card => (
+                        <button
+                          key={card.key}
+                          type="button"
+                          className="sa-user-type-card"
+                          onClick={() => setUserMgmtRole(card.key)}
+                        >
+                          <div className="sa-user-type-top">
+                            <div className="sa-user-type-icon">
+                              <i className={`fas ${card.icon}`}></i>
+                            </div>
+                            <div className="sa-user-type-count">{card.count}</div>
+                          </div>
+                          <div className="sa-user-type-title">{card.title}</div>
+                          <div className="sa-user-type-subtitle">{t('view') || 'View'}</div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="sa-panel premium sa-users-panel">
+                      <div className="panel-header">
+                        <div className="sa-list-title">
+                          <i className={`fas ${activeCard.icon}`}></i>
+                          {activeCard.title}
+                        </div>
+                        <div className="panel-actions">
+                          <div className="sa-count-badge">{activeCard.count}</div>
+                        </div>
                       </div>
-                      <div className="sa-item-actions">
-                        <button className="btn btn-outline" onClick={() => blockUser('dept-admin', u._id, !u.isBlocked)}>{u.isBlocked ? t('unblock') : t('block')}</button>
-                        <button className="btn btn-info" onClick={() => resetPassword('dept-admin', u._id)}>{t('resetPassword')}</button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="sa-panel">
-                <h4 className="section-subtitle">{t('fieldOfficers')}</h4>
-                <ul className="sa-list">
-                  {users.officers.map(u => (
-                    <li key={u._id} className="sa-list-item">
-                      <div className="sa-item-header">
-                        <div className="sa-item-title">{u.fullName} ({u.email}) [{u.department}]</div>
-                        <span className={`status-badge ${u.isBlocked ? 'status-pending' : 'status-resolved'}`}>{u.isBlocked ? 'BLOCKED' : 'ACTIVE'}</span>
-                      </div>
-                      <div className="sa-item-actions">
-                        <button className="btn btn-outline" onClick={() => blockUser('field-officer', u._id, !u.isBlocked)}>{u.isBlocked ? t('unblock') : t('block')}</button>
-                        <button className="btn btn-info" onClick={() => resetPassword('field-officer', u._id)}>{t('resetPassword')}</button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="sa-panel">
-                <h4 className="section-subtitle">{t('citizens')}</h4>
-                <ul className="sa-list">
-                  {users.citizens.map(u => (
-                    <li key={u._id} className="sa-list-item">
-                      <div className="sa-item-header">
-                        <div className="sa-item-title">{u.fullName} ({u.email})</div>
-                        <span className={`status-badge ${u.isBlocked ? 'status-pending' : 'status-resolved'}`}>{u.isBlocked ? 'BLOCKED' : 'ACTIVE'}</span>
-                      </div>
-                      <div className="sa-item-actions">
-                        <button className="btn btn-outline" onClick={() => blockUser('citizen', u._id, !u.isBlocked)}>{u.isBlocked ? t('unblock') : t('block')}</button>
-                        <button className="btn btn-info" onClick={() => resetPassword('citizen', u._id)}>{t('resetPassword')}</button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
+                      <ul className="sa-list">
+                        {activeList.map(u => (
+                          <li key={u._id} className="sa-list-item">
+                            <div className="sa-item-header">
+                              <div className="sa-item-title">{renderUserTitle(u)}</div>
+                              <span className={`status-badge ${u.isBlocked ? 'status-pending' : 'status-resolved'}`}>
+                                {u.isBlocked ? (t('blocked') || 'BLOCKED') : (t('active') || 'ACTIVE')}
+                              </span>
+                            </div>
+                            <div className="sa-item-actions">
+                              <button className="btn btn-outline" type="button" onClick={() => blockUser(activeKey, u._id, !u.isBlocked)}>
+                                {u.isBlocked ? (t('unblock') || 'Unblock') : (t('block') || 'Block')}
+                              </button>
+                              <button className="btn btn-info" type="button" onClick={() => resetPassword(activeKey, u._id)}>
+                                {t('resetPassword') || 'Reset Password'}
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                        {activeList.length === 0 && (
+                          <li className="sa-list-item">
+                            <div className="sa-muted">{t('noData') || 'No data'}</div>
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </section>
         )}
         {modalOpen && (
@@ -3241,7 +3985,16 @@ const SuperAdminDashboard = () => {
         )}
 
         {editModalOpen && editingDep && (
-          <div className="sa-modal-backdrop" onClick={() => setEditModalOpen(false)}>
+          <div
+            className="sa-modal-backdrop"
+            onClick={() => {
+              setEditModalOpen(false);
+              setEditingDep(null);
+              setEditDepBaselineKey('');
+              setEditDepLocationValidated(false);
+              setEditDepLocationValidatedText('');
+            }}
+          >
             <div className="sa-modal" onClick={(e) => e.stopPropagation()}>
               <div className="sa-modal-header">{t('editDepartment') || 'Edit Department'}</div>
               <div className="sa-modal-body">
@@ -3369,7 +4122,7 @@ const SuperAdminDashboard = () => {
                         {editDepLocationValidating ? (t('validating') || 'Validating...') : (t('validate') || 'Validate')}
                       </button>
                       <div style={{ fontSize: '0.85rem', color: editDepLocationValidated ? '#1b7f3a' : '#666', alignSelf: 'center' }}>
-                        {editDepLocationValidated ? (editDepLocationValidatedText || 'Validated') : (isCoverageReady(editingDep) ? 'Not validated' : 'Select operational coverage first')}
+                        {editDepLocationValidated ? (editDepLocationValidatedText || 'Validated') : (isCoverageReady(editingDep) ? 'Not validated' : '')}
                       </div>
                     </div>
                   </div>
@@ -3377,15 +4130,31 @@ const SuperAdminDashboard = () => {
                     <div className="form-label">{t('jurisdiction') || 'Jurisdiction (Auto)'}</div>
                     <input
                       className="sa-input"
-                      value={editingDep.jurisdiction}
+                      value={buildJurisdictionDisplayText(editingDep)}
                       readOnly
                       disabled={!isCoverageReady(editingDep)}
                     />
                   </div>
                   
                   <div className="sa-modal-actions">
-                    <button className="btn btn-outline" type="button" onClick={() => setEditModalOpen(false)}>{t('cancel') || 'Cancel'}</button>
-                    <button className="btn btn-primary" type="submit" disabled={!isCoverageReady(editingDep) || !editDepLocationValidated}>
+                    <button
+                      className="btn btn-outline"
+                      type="button"
+                      onClick={() => {
+                        setEditModalOpen(false);
+                        setEditingDep(null);
+                        setEditDepBaselineKey('');
+                        setEditDepLocationValidated(false);
+                        setEditDepLocationValidatedText('');
+                      }}
+                    >
+                      {t('cancel') || 'Cancel'}
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      type="submit"
+                      disabled={!isCoverageReady(editingDep) || ((editDepBaselineKey ? (makeDepValidationKey(editingDep) !== editDepBaselineKey) : true) && !editDepLocationValidated)}
+                    >
                       {t('save') || 'Save'}
                     </button>
                   </div>

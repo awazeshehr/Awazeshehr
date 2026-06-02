@@ -43,11 +43,11 @@ function buildDepartmentJurisdiction(areaTypes, sectors, ruralJurisdictions) {
   const parts = [];
   if (types.includes('Urban')) {
     const s = Array.isArray(sectors) ? sectors.filter(Boolean) : [];
-    parts.push(`Urban: ${s.join(', ')}`);
+    parts.push(`Urban: ${s.length ? s.join(', ') : 'All sectors'}`);
   }
   if (types.includes('Rural')) {
     const r = Array.isArray(ruralJurisdictions) ? ruralJurisdictions.filter(Boolean) : [];
-    parts.push(`Rural: ${r.join(', ')}`);
+    parts.push(`Rural: ${r.length ? r.join(', ') : 'All jurisdictions'}`);
   }
   return parts.join(' | ');
 }
@@ -56,7 +56,19 @@ function validateIslamabadLocationText(location, areaTypes, sectors, ruralJurisd
   const loc = String(location || '').trim();
   if (!loc) return { ok: false, message: 'Location is required' };
   const lower = loc.toLowerCase();
-  if (!lower.includes('islamabad')) return { ok: false, message: 'Department address must be within Islamabad' };
+  const sectorList = Array.isArray(sectors) ? sectors.map(s => String(s || '').trim().toLowerCase()).filter(Boolean) : [];
+  const ruralList = Array.isArray(ruralJurisdictions) ? ruralJurisdictions.map(s => String(s || '').trim().toLowerCase()).filter(Boolean) : [];
+  const mentionsCoverage = sectorList.some(s => lower.includes(s)) || ruralList.some(r => lower.includes(r));
+  const mentionsIslamabadMetro =
+    lower.includes('islamabad') ||
+    lower.includes('islamabad capital territory') ||
+    lower.includes('capital territory') ||
+    lower.includes('ict') ||
+    lower.includes('rawalpindi');
+  const mentionsPakistan = lower.includes('pakistan');
+  if (!mentionsIslamabadMetro && !mentionsCoverage && !mentionsPakistan) {
+    return { ok: false, message: 'Department address must be within Islamabad (include Islamabad/ICT/Rawalpindi, Pakistan, or your selected sector/jurisdiction)' };
+  }
 
   return { ok: true };
 }
@@ -413,36 +425,34 @@ router.post('/users/:role/:id/reset-password', async (req, res) => {
 // Departments CRUD
 router.post('/departments', async (req, res) => {
   try {
-    const { name, location, jurisdiction, servicesOffered, areaTypes, sectors, ruralJurisdictions } = req.body;
+    const { name, location, servicesOffered, areaTypes, sectors, ruralJurisdictions, addressValidated } = req.body;
     
     if (!name) return res.status(400).json({ success: false, message: 'Name is required' });
     if (!Array.isArray(areaTypes) || areaTypes.length === 0) {
       return res.status(400).json({ success: false, message: 'Operational area type is required' });
     }
-    if (areaTypes.includes('Urban') && (!Array.isArray(sectors) || sectors.length === 0)) {
-      return res.status(400).json({ success: false, message: 'Select at least one Urban sector' });
-    }
-    if (areaTypes.includes('Rural') && (!Array.isArray(ruralJurisdictions) || ruralJurisdictions.length === 0)) {
-      return res.status(400).json({ success: false, message: 'Select at least one Rural jurisdiction' });
-    }
+    const nextSectors = areaTypes.includes('Urban') ? (Array.isArray(sectors) ? sectors : []) : [];
+    const nextRuralJurisdictions = areaTypes.includes('Rural') ? (Array.isArray(ruralJurisdictions) ? ruralJurisdictions : []) : [];
 
     // Validation
-    if (areaTypes && areaTypes.includes('Urban') && sectors && sectors.length > 0) {
-        const sectorCount = await UrbanSector.countDocuments({ name: { $in: sectors } });
-        if (sectorCount !== sectors.length) {
+    if (areaTypes && areaTypes.includes('Urban') && nextSectors.length > 0) {
+        const sectorCount = await UrbanSector.countDocuments({ name: { $in: nextSectors } });
+        if (sectorCount !== nextSectors.length) {
              return res.status(400).json({ success: false, message: 'One or more invalid Urban Sectors provided.' });
         }
     }
-    if (areaTypes && areaTypes.includes('Rural') && ruralJurisdictions && ruralJurisdictions.length > 0) {
-        const jurisdictionCount = await RuralJurisdiction.countDocuments({ name: { $in: ruralJurisdictions } });
-        if (jurisdictionCount !== ruralJurisdictions.length) {
+    if (areaTypes && areaTypes.includes('Rural') && nextRuralJurisdictions.length > 0) {
+        const jurisdictionCount = await RuralJurisdiction.countDocuments({ name: { $in: nextRuralJurisdictions } });
+        if (jurisdictionCount !== nextRuralJurisdictions.length) {
              return res.status(400).json({ success: false, message: 'One or more invalid Rural Jurisdictions provided.' });
         }
     }
 
-    const locCheck = validateIslamabadLocationText(location, areaTypes, sectors, ruralJurisdictions);
-    if (!locCheck.ok) return res.status(400).json({ success: false, message: locCheck.message });
-    const computedJurisdiction = buildDepartmentJurisdiction(areaTypes, sectors, ruralJurisdictions);
+    if (addressValidated !== true) {
+      const locCheck = validateIslamabadLocationText(location, areaTypes, nextSectors, nextRuralJurisdictions);
+      if (!locCheck.ok) return res.status(400).json({ success: false, message: locCheck.message });
+    }
+    const computedJurisdiction = buildDepartmentJurisdiction(areaTypes, nextSectors, nextRuralJurisdictions);
 
     const dep = await Department.create({ 
       name, 
@@ -450,8 +460,8 @@ router.post('/departments', async (req, res) => {
       jurisdiction: computedJurisdiction,
       servicesOffered, 
       areaTypes: areaTypes || ['Urban'],
-      sectors: (areaTypes && areaTypes.includes('Urban')) ? sectors : [],
-      ruralJurisdictions: (areaTypes && areaTypes.includes('Rural')) ? ruralJurisdictions : []
+      sectors: nextSectors,
+      ruralJurisdictions: nextRuralJurisdictions
     });
     audit(req, 'create', 'department', dep._id, { name, areaTypes });
     res.status(201).json({ success: true, department: dep });
@@ -480,12 +490,6 @@ router.put('/departments/:id', async (req, res) => {
     if (!Array.isArray(nextAreaTypes) || nextAreaTypes.length === 0) {
       return res.status(400).json({ success: false, message: 'Operational area type is required' });
     }
-    if (nextAreaTypes.includes('Urban') && (!Array.isArray(nextSectors) || nextSectors.length === 0)) {
-      return res.status(400).json({ success: false, message: 'Select at least one Urban sector' });
-    }
-    if (nextAreaTypes.includes('Rural') && (!Array.isArray(nextRuralJurisdictions) || nextRuralJurisdictions.length === 0)) {
-      return res.status(400).json({ success: false, message: 'Select at least one Rural jurisdiction' });
-    }
 
     if (nextAreaTypes.includes('Urban') && nextSectors.length > 0) {
       const sectorCount = await UrbanSector.countDocuments({ name: { $in: nextSectors } });
@@ -500,12 +504,15 @@ router.put('/departments/:id', async (req, res) => {
       }
     }
 
-    const locCheck = validateIslamabadLocationText(nextLocation, nextAreaTypes, nextSectors, nextRuralJurisdictions);
-    if (!locCheck.ok) return res.status(400).json({ success: false, message: locCheck.message });
+    if (updates.addressValidated !== true) {
+      const locCheck = validateIslamabadLocationText(nextLocation, nextAreaTypes, nextSectors, nextRuralJurisdictions);
+      if (!locCheck.ok) return res.status(400).json({ success: false, message: locCheck.message });
+    }
     const computedJurisdiction = buildDepartmentJurisdiction(nextAreaTypes, nextSectors, nextRuralJurisdictions);
 
+    const { addressValidated, ...restUpdates } = updates || {};
     const computedUpdates = {
-      ...updates,
+      ...restUpdates,
       location: nextLocation,
       areaTypes: nextAreaTypes,
       sectors: nextSectors,
@@ -518,6 +525,24 @@ router.put('/departments/:id', async (req, res) => {
     res.json({ success: true, department: dep });
   } catch (e) {
     res.status(500).json({ success: false, message: 'Failed to update department' });
+  }
+});
+
+router.delete('/departments/:id', async (req, res) => {
+  try {
+    const dep = await Department.findById(req.params.id);
+    if (!dep) return res.status(404).json({ success: false, message: 'Department not found' });
+
+    await Department.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
+    await DepartmentAdmin.updateMany({ departmentId: dep._id }, { $unset: { departmentId: '' } });
+    await SubsectorJurisdictionMapping.updateMany({}, { $pull: { departmentIds: dep._id } });
+    await CategoryDepartmentMapping.deleteMany({ departmentId: dep._id });
+    await RoutingPolicy.updateMany({ 'action.departmentId': dep._id }, { $set: { enabled: false, 'action.departmentId': null } });
+
+    audit(req, 'delete', 'department', req.params.id, { isActive: false });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to delete department' });
   }
 });
 

@@ -226,6 +226,9 @@ class DataService {
   async saUpdateDepartment(id, payload) {
     return this.apiCall(`/superadmin/departments/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
   }
+  async saDeleteDepartment(id) {
+    return this.apiCall(`/superadmin/departments/${id}`, { method: 'DELETE' });
+  }
   async saListDepartments() {
     return this.apiCall('/superadmin/departments');
   }
