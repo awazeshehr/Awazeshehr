@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, Keyboard
 import { io } from 'socket.io-client';
 import client, { API_URL } from '../api/client';
 import { translations } from '../constants/translations';
+import colors from '../constants/colors';
 
 const CITIZEN_TEMPLATES = [
   { key: 'still_not_resolved', label: 'Issue still not resolved.' },
@@ -11,7 +12,14 @@ const CITIZEN_TEMPLATES = [
   { key: 'thank_you', label: 'Thank you.' }
 ];
 
-export default function OfficerChatScreen({ complaintId, onBack, lang = 'english' }) {
+const OFFICER_TEMPLATES = [
+  { key: 'arrived', label: 'I have arrived at the location.' },
+  { key: 'in_progress', label: 'Work is in progress.' },
+  { key: 'requires_materials', label: 'Issue requires additional materials.' },
+  { key: 'resolved_verify', label: 'Issue resolved. Please verify.' }
+];
+
+export default function OfficerChatScreen({ complaintId, onBack, lang = 'english', selfRole = 'citizen' }) {
   const t = translations[lang];
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -24,6 +32,7 @@ export default function OfficerChatScreen({ complaintId, onBack, lang = 'english
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [composerHeight, setComposerHeight] = useState(0);
   const [templatesHeight, setTemplatesHeight] = useState(0);
+  const templates = String(selfRole || 'citizen') === 'field-officer' ? OFFICER_TEMPLATES : CITIZEN_TEMPLATES;
 
   useEffect(() => {
     // Get user from local storage logic via client or context? 
@@ -134,7 +143,9 @@ export default function OfficerChatScreen({ complaintId, onBack, lang = 'english
         <TouchableOpacity onPress={onBack} style={styles.backBtn}>
           <Text style={styles.backText}>← {t.back}</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{t.chatWithOfficer}</Text>
+        <Text style={styles.headerTitle}>
+          {String(selfRole || 'citizen') === 'field-officer' ? (t.complaintChat || 'Complaint Chat') : (t.chatWithOfficer || 'Chat')}
+        </Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -148,12 +159,21 @@ export default function OfficerChatScreen({ complaintId, onBack, lang = 'english
             contentContainerStyle={[styles.listContent, { paddingBottom: keyboardHeight + composerHeight + templatesHeight + 32 }]}
             keyboardShouldPersistTaps="handled"
             renderItem={({ item }) => {
-                const isMe = item.senderRole === 'citizen';
+                const meRole = String(selfRole || 'citizen');
+                const isMe = item.senderRole === meRole;
+                const senderRole = String(item.senderRole || '').trim();
+                const senderLabel =
+                  isMe ? (t.me || 'Me') :
+                    senderRole === 'citizen' ? (t.citizen || 'Citizen') :
+                      senderRole === 'field-officer' ? (t.fieldOfficer || 'Field Officer') :
+                        senderRole === 'dept-admin' ? (t.departmentAdmin || 'Department Admin') :
+                          senderRole === 'super-admin' ? (t.superAdmin || 'Super Admin') :
+                            senderRole || 'User';
                 return (
                     <View style={[styles.msgRow, isMe ? styles.msgRowRight : styles.msgRowLeft]}>
                         <View style={[styles.bubble, isMe ? styles.bubbleRight : styles.bubbleLeft]}>
                             <Text style={[styles.senderName, isMe ? styles.textRight : styles.textLeft]}>
-                                {isMe ? t.me : t.fieldOfficer}
+                                {senderLabel}
                             </Text>
                             <Text style={[styles.msgText, isMe ? styles.textRight : styles.textLeft]}>
                                 {item.text}
@@ -172,7 +192,7 @@ export default function OfficerChatScreen({ complaintId, onBack, lang = 'english
         style={[styles.composerWrapper, { bottom: keyboardHeight }]}
       >
         <View style={styles.templateBar} onLayout={(e) => setTemplatesHeight(e.nativeEvent.layout.height)}>
-          {CITIZEN_TEMPLATES.map(tpl => {
+          {templates.map(tpl => {
             const selected = selectedTemplateKey === tpl.key;
             return (
               <TouchableOpacity
@@ -211,10 +231,10 @@ export default function OfficerChatScreen({ complaintId, onBack, lang = 'english
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#eee' },
+  container: { flex: 1, backgroundColor: colors.background },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: 'rgba(26,42,108,0.10)' },
   backBtn: { padding: 8 },
-  backText: { fontSize: 16, color: '#667eea', fontWeight: '600' },
+  backText: { fontSize: 16, color: colors.primary, fontWeight: '900' },
   headerTitle: { fontSize: 18, fontWeight: '700' },
   listContent: { padding: 16 },
   composerWrapper: { position: 'absolute', left: 0, right: 0, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#eee', zIndex: 10 },
@@ -222,22 +242,22 @@ const styles = StyleSheet.create({
   msgRowLeft: { alignItems: 'flex-start' },
   msgRowRight: { alignItems: 'flex-end' },
   bubble: { padding: 12, borderRadius: 16, maxWidth: '80%' },
-  bubbleLeft: { backgroundColor: '#fff', borderTopLeftRadius: 4 },
-  bubbleRight: { backgroundColor: '#667eea', borderTopRightRadius: 4 },
+  bubbleLeft: { backgroundColor: colors.surface, borderTopLeftRadius: 4, borderWidth: 1, borderColor: 'rgba(26,42,108,0.10)' },
+  bubbleRight: { backgroundColor: colors.primary, borderTopRightRadius: 4 },
   senderName: { fontSize: 10, marginBottom: 2, opacity: 0.7 },
   msgText: { fontSize: 15 },
-  textLeft: { color: '#333' },
-  textRight: { color: '#fff' },
+  textLeft: { color: colors.text },
+  textRight: { color: colors.light },
   templateBar: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12, paddingBottom: 8, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#eee' },
   templateBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, marginRight: 8, marginTop: 8 },
-  templateBtnSelected: { backgroundColor: '#667eea' },
-  templateBtnUnselected: { backgroundColor: '#edf2f7' },
+  templateBtnSelected: { backgroundColor: colors.primary },
+  templateBtnUnselected: { backgroundColor: 'rgba(26,42,108,0.08)' },
   templateText: { fontSize: 12, fontWeight: '600' },
   templateTextSelected: { color: '#fff' },
-  templateTextUnselected: { color: '#2d3748' },
+  templateTextUnselected: { color: colors.primary },
   composerBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 12, marginBottom: 8, backgroundColor: '#fff', borderRadius: 24, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: '#e5e7eb', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, elevation: 2 },
   composerInput: { flex: 1, backgroundColor: 'transparent', color: '#111827', borderRadius: 16, paddingHorizontal: 6, paddingVertical: 6, minHeight: 36, maxHeight: 120 },
-  sendBtn: { justifyContent: 'center', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#667eea', borderRadius: 20 },
+  sendBtn: { justifyContent: 'center', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: colors.primary, borderRadius: 20 },
   sendText: { color: '#fff', fontWeight: '600' },
   emptyText: { textAlign: 'center', color: '#999', marginTop: 20 }
 });

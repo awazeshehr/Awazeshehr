@@ -27,5 +27,8 @@
   },
   "devDependencies": {
     "eslint": "^8.57.0"
+  },
+  "overrides": {
+    "hermes-parser": "0.32.0"
   }
 }

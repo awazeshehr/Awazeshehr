@@ -3,6 +3,7 @@ import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity }
 import client from '../api/client';
 
 import { translations } from '../constants/translations';
+import colors from '../constants/colors';
 
 export default function NotificationsScreen({ onBack, lang }) {
   const t = translations[lang || 'english'];
@@ -23,16 +24,16 @@ export default function NotificationsScreen({ onBack, lang }) {
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backButtonText}>← Back</Text>
+          <Text style={styles.backButtonText}>← {t.back || 'Back'}</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Notifications</Text>
+        <Text style={styles.headerTitle}>{t.notifications || 'Notifications'}</Text>
       </View>
       {loading ? (
         <ActivityIndicator />
       ) : (
         <FlatList
           data={items}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item, idx) => String(item?._id || item?.id || idx)}
           renderItem={({ item }) => {
             const type = (item.type || 'info').toLowerCase();
             const icon = type === 'success' ? '✓' : type === 'error' ? '!' : type === 'warning' ? '!' : 'i';
@@ -54,7 +55,7 @@ export default function NotificationsScreen({ onBack, lang }) {
                 <View style={styles.cardBody}>
                   <Text style={styles.cardTitle}>{item.title}</Text>
                   <Text style={styles.cardText}>{item.message}</Text>
-                  <Text style={styles.cardMeta}>{new Date(item.timestamp).toLocaleString()}</Text>
+                  <Text style={styles.cardMeta}>{item.timestamp ? new Date(item.timestamp).toLocaleString() : ''}</Text>
                 </View>
               </View>
             );
@@ -69,19 +70,19 @@ export default function NotificationsScreen({ onBack, lang }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  header: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 16, elevation: 2, marginBottom: 10 },
+  container: { flex: 1, backgroundColor: colors.background },
+  header: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, padding: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(26,42,108,0.10)' },
   backButton: { marginRight: 16, padding: 4 },
-  backButtonText: { fontSize: 16, color: '#667eea', fontWeight: '600' },
-  headerTitle: { fontSize: 20, fontWeight: '700', color: '#2d3748' },
+  backButtonText: { fontSize: 16, color: colors.primary, fontWeight: '900' },
+  headerTitle: { fontSize: 18, fontWeight: '900', color: colors.text },
   listContent: { padding: 20, paddingBottom: 40 },
   loader: { marginTop: 50 },
   title: { fontSize: 22, fontWeight: '600', marginBottom: 12, display: 'none' },
-  card: { backgroundColor: '#fff', borderRadius: 16, padding: 12, marginVertical: 10, borderColor: '#e2e8f0', borderWidth: 1, flexDirection: 'row', alignItems: 'center', elevation: 2, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } },
+  card: { backgroundColor: colors.surface, borderRadius: 16, padding: 12, marginVertical: 10, borderColor: 'rgba(26,42,108,0.10)', borderWidth: 1, flexDirection: 'row', alignItems: 'center' },
   cardBody: { flex: 1 },
   cardTitle: { fontWeight: '600', marginBottom: 6 },
-  cardText: { color: '#444' },
-  cardMeta: { color: '#666', marginTop: 6 },
+  cardText: { color: colors.textSecondary },
+  cardMeta: { color: colors.placeholder, marginTop: 6 },
   iconCircle: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   iconText: { fontSize: 18, fontWeight: '700' },
   iconSuccess: { backgroundColor: '#C6F6D5' },

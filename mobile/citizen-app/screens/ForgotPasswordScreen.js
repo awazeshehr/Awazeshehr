@@ -12,6 +12,8 @@ export default function ForgotPasswordScreen({ onBack, lang }) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const handleEmailSubmit = async () => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -160,6 +162,8 @@ export default function ForgotPasswordScreen({ onBack, lang }) {
             </TouchableOpacity>
           </>
         );
+      default:
+        return null;
     }
   };
 
