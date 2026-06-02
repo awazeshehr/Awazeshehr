@@ -18,7 +18,35 @@ console.log('dotenv configured');
 
 // Connect to database
 console.log('Calling connectDB...');
-connectDB();
+mongoose.connection.on('connected', () => {
+  console.log('MongoDB connection event: connected');
+});
+mongoose.connection.on('disconnected', () => {
+  console.warn('MongoDB connection event: disconnected');
+});
+mongoose.connection.on('error', (err) => {
+  const safeError = {
+    name: err?.name,
+    message: err?.message,
+    code: err?.code,
+    errno: err?.errno,
+    syscall: err?.syscall,
+    hostname: err?.hostname,
+    stack: err?.stack
+  };
+  global.__dbConnection = {
+    ok: false,
+    failedAt: new Date().toISOString(),
+    uriPresent: Boolean(process.env.MONGODB_URI),
+    lastError: safeError
+  };
+  console.error('MongoDB connection event: error (safe):', JSON.stringify(safeError));
+});
+connectDB().then((ok) => {
+  console.log(`connectDB resolved: ${ok ? 'ok' : 'failed'}`);
+}).catch((e) => {
+  console.error('connectDB unexpected rejection:', e?.message || e);
+});
 console.log('connectDB called.');
 
 const app = express();
@@ -29,6 +57,21 @@ const { Server } = require('socket.io');
 app.use(cors());
 app.use(express.json());
 app.use(require('./middleware/correlation'));
+
+app.use((req, res, next) => {
+  try {
+    if (!req.path.startsWith('/api')) return next();
+    if (req.path === '/api/test' || req.path === '/api/db/health') return next();
+    const state = mongoose.connection.readyState;
+    if (state !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database connection unavailable'
+      });
+    }
+  } catch (e) {}
+  next();
+});
 
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -52,7 +95,7 @@ app.get('/api/test', (req, res) => {
 // Database health
 app.get('/api/db/health', (req, res) => {
   const state = mongoose.connection.readyState;
-  res.json({ connected: state === 1, state });
+  res.json({ connected: state === 1, state, db: global.__dbConnection || null });
 });
 
 const PORT = process.env.PORT || 5100;
